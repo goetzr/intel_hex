@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "intel_hex",
+    "decode_intel_hex",
+]
