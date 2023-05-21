@@ -69,15 +69,17 @@ impl<'a> RecordParser<'a> {
     }
 
     fn parse(&mut self) -> Result<Record> {
-        self.advance_past_start_code()?;
+        self.skip_start_code()?;
         self.parse_byte_count()?;
-        
+        self.parse_address()?;
+        self.parse_type()?;
+        self.parse_data()?;
 
         // TODO: Verify checksum
         todo!()
     }
 
-    fn advance_past_start_code(&mut self) -> Result<()> {
+    fn skip_start_code(&mut self) -> Result<()> {
         if let Some((_, remaining)) = self.line.split_once(':') {
             self.line = remaining;
             Ok(())
@@ -87,13 +89,90 @@ impl<'a> RecordParser<'a> {
     }
 
     fn parse_byte_count(&mut self) -> Result<()> {
-        if self.line.len() < 2 {
+        const BYTE_COUNT_NUM_DIGITS: usize = 2;
+        if self.line.len() < BYTE_COUNT_NUM_DIGITS {
             return self.error_result(ParseRecordKind::Incomplete(RecordField::ByteCount));
         }
-        let digits = self.line[0..2].to_string();
-        self.line = &self.line[2..];
-        self.byte_count = u8::from_str_radix(digits.as_str(), 16)
-            .map_err(|e| self.error(ParseRecordKind::InvalidByteCount(digits, e)))?;
+        let digits = self.line[0..BYTE_COUNT_NUM_DIGITS].to_string();
+        self.line = &self.line[BYTE_COUNT_NUM_DIGITS..];
+        self.byte_count = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
+            self.error(ParseRecordKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::ByteCount,
+                error: e,
+        })
+        })?;
+        Ok(())
+    }
+
+    fn parse_address(&mut self) -> Result<()> {
+        const ADDRESS_NUM_DIGITS: usize = 4;
+        if self.line.len() < ADDRESS_NUM_DIGITS {
+            return self.error_result(ParseRecordKind::Incomplete(RecordField::Address));
+        }
+        let digits = self.line[0..ADDRESS_NUM_DIGITS].to_string();
+        self.line = &self.line[ADDRESS_NUM_DIGITS..];
+        self.addr = u16::from_str_radix(digits.as_str(), 16).map_err(|e| {
+            self.error(ParseRecordKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::Address,
+                error: e,
+        })
+        })?;
+        Ok(())
+    }
+
+    fn parse_type(&mut self) -> Result<()> {
+        const TYPE_NUM_DIGITS: usize = 2;
+        if self.line.len() < TYPE_NUM_DIGITS {
+            return self.error_result(ParseRecordKind::Incomplete(RecordField::Type));
+        }
+        let digits = self.line[0..TYPE_NUM_DIGITS].to_string();
+        self.line = &self.line[TYPE_NUM_DIGITS..];
+        self.kind = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
+            self.error(ParseRecordKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::Type,
+                error: e,
+            })
+        })?;
+        Ok(())
+    }
+
+    fn parse_data(&mut self) -> Result<()> {
+        let num_digits = self.byte_count as usize * 2;
+        if self.line.len() < num_digits {
+            return self.error_result(ParseRecordKind::Incomplete(RecordField::Data));
+        }
+        let digits = &self.line[0..num_digits];
+        self.line = &self.line[num_digits..];
+        let digit_pair_offsets: Vec<usize> = (0..self.byte_count as usize).collect();
+        self.data = (0..self.byte_count as usize)
+            .map(|byte_idx| {
+                let digits_pair_idx = byte_idx * 2;
+                let digits_pair = &digits[digits_idx..digits_idx + 2];
+                let byte_val = u8::from_str_radix(digits_pair, 16)
+                    .map_err(|e| {
+                        self.error(ParseRecordKind::ParseData {
+                            digits: digits_pair,
+                            offset: (), error: () })
+                    })
+            })
+        // self.data = digits
+        //     .windows(2)
+        //     .enumerate()
+        //     .map(|(win_idx, digits)| {
+        //         let digits_str = String::from_utf8(digits.to_vec()).unwrap();
+        //     })
+        //     .collect()
+        //     .map_err(|e| {
+        //         self.error(ParseRecordKind::ParseData {
+        //             digits,
+        //             HexDigitsField::ByteCount,
+        //             e,
+        //     })
+        //     })?;
+        
         Ok(())
     }
 }
@@ -153,12 +232,30 @@ impl ParseRecord {
 #[derive(Debug)]
 pub enum ParseRecordKind {
     Incomplete(RecordField),
-    InvalidByteCount(String, ParseIntError),
+    ParseHexDigits {
+        digits: String,
+        field: HexDigitsField,
+        error: ParseIntError,
+    },
+    ParseData {
+        digits: Vec<u8>,
+        offset: usize,
+        error: ParseIntError,
+    },
 }
 
 #[derive(Debug)]
 pub enum RecordField {
     StartCode,
+    ByteCount,
+    Address,
+    Type,
+    Data,
+    Checksum,
+}
+
+#[derive(Debug)]
+enum HexDigitsField {
     ByteCount,
     Address,
     Type,
