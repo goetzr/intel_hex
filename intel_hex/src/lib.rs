@@ -140,38 +140,29 @@ impl<'a> RecordParser<'a> {
     }
 
     fn parse_data(&mut self) -> Result<()> {
-        let num_digits = self.byte_count as usize * 2;
+        const DIGITS_PER_BYTE: usize = 2;
+        let num_digits = self.byte_count as usize * DIGITS_PER_BYTE;
         if self.line.len() < num_digits {
             return self.error_result(ParseRecordKind::Incomplete(RecordField::Data));
         }
         let digits = &self.line[0..num_digits];
         self.line = &self.line[num_digits..];
-        let digit_pair_offsets: Vec<usize> = (0..self.byte_count as usize).collect();
-        self.data = (0..self.byte_count as usize)
-            .map(|byte_idx| {
-                let digits_pair_idx = byte_idx * 2;
-                let digits_pair = &digits[digits_idx..digits_idx + 2];
-                let byte_val = u8::from_str_radix(digits_pair, 16)
-                    .map_err(|e| {
-                        self.error(ParseRecordKind::ParseData {
-                            digits: digits_pair,
-                            offset: (), error: () })
+        let mut data = vec![];
+        for byte_idx in 0..self.byte_count {
+            let digits_pair_idx = byte_idx as usize * DIGITS_PER_BYTE;
+            let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
+            let digits_pair = &digits[digits_pair_idx..next_pair_idx];
+            let byte_val = u8::from_str_radix(digits_pair, 16)
+                .map_err(|e| {
+                    self.error(ParseRecordKind::ParseData {
+                        digits: digits_pair.to_string(),
+                        offset: digits_pair_idx,
+                        error: e
                     })
-            })
-        // self.data = digits
-        //     .windows(2)
-        //     .enumerate()
-        //     .map(|(win_idx, digits)| {
-        //         let digits_str = String::from_utf8(digits.to_vec()).unwrap();
-        //     })
-        //     .collect()
-        //     .map_err(|e| {
-        //         self.error(ParseRecordKind::ParseData {
-        //             digits,
-        //             HexDigitsField::ByteCount,
-        //             e,
-        //     })
-        //     })?;
+                })?;
+            data.push(byte_val);
+        }
+        self.data = data;
         
         Ok(())
     }
@@ -238,7 +229,7 @@ pub enum ParseRecordKind {
         error: ParseIntError,
     },
     ParseData {
-        digits: Vec<u8>,
+        digits: String,
         offset: usize,
         error: ParseIntError,
     },
@@ -255,7 +246,7 @@ pub enum RecordField {
 }
 
 #[derive(Debug)]
-enum HexDigitsField {
+pub enum HexDigitsField {
     ByteCount,
     Address,
     Type,
