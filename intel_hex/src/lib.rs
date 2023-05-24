@@ -65,7 +65,7 @@ impl<'a> RecordParser<'a> {
     }
 
     fn error(&self, kind: ParseRecordKind) -> Error {
-        Error::ParseRecord(ParseRecord::new(self.line_no, kind))
+        Error::ParseRecord { line_no: self.line_no, kind }
     }
 
     fn parse(&mut self) -> Result<Record> {
@@ -100,7 +100,7 @@ impl<'a> RecordParser<'a> {
                 digits,
                 field: HexDigitsField::ByteCount,
                 error: e,
-        })
+            })
         })?;
         Ok(())
     }
@@ -117,7 +117,7 @@ impl<'a> RecordParser<'a> {
                 digits,
                 field: HexDigitsField::Address,
                 error: e,
-        })
+            })
         })?;
         Ok(())
     }
@@ -152,18 +152,17 @@ impl<'a> RecordParser<'a> {
             let digits_pair_idx = byte_idx as usize * DIGITS_PER_BYTE;
             let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
             let digits_pair = &digits[digits_pair_idx..next_pair_idx];
-            let byte_val = u8::from_str_radix(digits_pair, 16)
-                .map_err(|e| {
-                    self.error(ParseRecordKind::ParseData {
-                        digits: digits_pair.to_string(),
-                        offset: digits_pair_idx,
-                        error: e
-                    })
-                })?;
+            let byte_val = u8::from_str_radix(digits_pair, 16).map_err(|e| {
+                self.error(ParseRecordKind::ParseData {
+                    digits: digits_pair.to_string(),
+                    offset: digits_pair_idx,
+                    error: e,
+                })
+            })?;
             data.push(byte_val);
         }
         self.data = data;
-        
+
         Ok(())
     }
 }
@@ -205,19 +204,10 @@ impl RecordKind {
 pub enum Error {
     ReadFile(io::Error),
     NotAscii,
-    ParseRecord(ParseRecord),
-}
-
-#[derive(Debug)]
-pub struct ParseRecord {
-    line_no: usize,
-    kind: ParseRecordKind,
-}
-
-impl ParseRecord {
-    fn new(line_no: usize, kind: ParseRecordKind) -> Self {
-        ParseRecord { line_no, kind }
-    }
+    ParseRecord {
+        line_no: usize,
+        kind: ParseRecordKind,
+    },
 }
 
 #[derive(Debug)]
@@ -260,7 +250,7 @@ impl fmt::Display for Error {
         match self {
             ReadFile(e) => write!(f, "failed to read the file: {e}"),
             NotAscii => write!(f, "file contents not ASCII"),
-            ParseRecord(pr) => write!(f, "failed to parse record"),
+            ParseRecord { line_no: _, kind: _ } => write!(f, "failed to parse record"),
         }
     }
 }
@@ -274,8 +264,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn finds_start_code() -> Result<()> {
+        let line = ":0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(1, line);
+        parser.skip_start_code()
     }
+
+    #[test]
+    fn returns_error_when_start_code_missing() {
+        let line = "0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(1, line);
+        let result = parser.skip_start_code();
+        assert!(result.is_err() && matches!(result,
+            Result::<()>::Err(Error::ParseRecord {
+                line_no: 1,
+                kind: ParseRecordKind::Incomplete(
+                    RecordField::StartCode)
+            }))
+        );
+    }
+
+    #[test]
+    fn skips_characters_before_start_code() -> Result<()> {
+        let line = "abcd:0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(1, line);
+        parser.skip_start_code()
+    }
+
+    #[test]
+    fn parses_byte_count() -> Result<()> {
+        let line = ":0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(1, line);
+        parser.skip_start_code()?;
+        parser.parse_byte_count()?;
+        assert_eq!(parser.byte_count, 11);
+        Ok(())
+    }
+
+    // fn returns_error_when_byte_count_invalid() {
+    //     let line = ":0H0010006164647265737320676170A7";
+    //     let mut parser = RecordParser::new(1, line);
+    //     parser.skip_start_code()?;
+    //     assert!(parser.parse_byte_count().is_err());
+    // }
 }
