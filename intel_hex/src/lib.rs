@@ -1,58 +1,59 @@
 use std::error::Error as StdError;
 use std::fmt;
-use std::fs;
-use std::io;
 use std::num::ParseIntError;
-use std::path::Path;
 
-/// Parses the binary content from the specified Hex file.
-/// NOTE: For efficiency, it's assumed that the specified Hex file contains only ASCII characters.
-pub fn parse_from_file<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
-    let data = fs::read_to_string(path).map_err(|e| Error::ReadFile(e))?;
-
-    parse_from_str(data.as_str())
-}
-
-/// Parses the binary content from the specified Hex file contents.
 /// NOTE: For efficiency, it's assumed that the specified Hex file contents contains only ASCII characters.
-pub fn parse_from_str(hex_file_contents: &str) -> Result<Vec<u8>> {
-    let mut parser = FileContentParser::new(hex_file_contents);
-    parser.parse()
+pub fn records<'c>(content: &'c str) -> Records<'c> {
+    Records { content, line_no: 0 }
 }
 
-struct FileContentParser<'a> {
-    data: &'a str,
-    base_addr: u32,
+pub struct Records<'c> {
+    content: &'c str,
+    line_no: usize,
 }
 
-impl<'a> FileContentParser<'a> {
-    fn new(data: &'a str) -> Self {
-        FileContentParser { data, base_addr: 0 }
-    }
+impl<'c> Iterator for Records<'c> {
+    type Item = Result<Record>;
 
-    fn parse(&mut self) -> Result<Vec<u8>> {
-        for (line_idx, line) in self.data.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
-            let line_no = line_idx + 1;
-            let mut parser = RecordParser::new(line_no, line);
-            let record = parser.parse()?;
+    fn next(&mut self) -> Option<Self::Item> {
+        let line = match
+            self.content
+            .lines()
+            .map(|l| {
+                self.line_no += 1;
+                l
+            })
+            .filter(|l| !l.is_empty())
+            .next() {
+                Some(line) => line,
+                None => return None,
+            };
+        match self.parse_record(self.line_no, line) {
+            Ok(rec) => Some(Ok(rec)),
+            Err(e) => Some(Err(e)),
         }
+    }
+}
 
-        Ok(vec![])
+impl<'c> Records<'c> {
+    fn parse_record(&mut self, line_no: usize, line: &str) -> Result<Record> {
+        let parser = RecordParser::new(line_no, line);
+        parser.parse()
     }
 }
 
 #[derive(Default)]
-struct RecordParser<'a> {
+struct RecordParser<'l> {
     line_no: usize,
-    line: &'a str,
+    line: &'l str,
     byte_count: u8,
     addr: u16,
-    kind: u8,
+    kind: RecordKind,
     data: Vec<u8>,
 }
 
-impl<'a> RecordParser<'a> {
-    fn new(line_no: usize, line: &'a str) -> Self {
+impl<'l> RecordParser<'l> {
+    fn new(line_no: usize, line: &'l str) -> Self {
         RecordParser {
             line_no,
             line,
@@ -60,23 +61,27 @@ impl<'a> RecordParser<'a> {
         }
     }
 
-    fn error_result(&self, kind: ParseRecordKind) -> Result<()> {
+    fn error_result(&self, kind: ErrorKind) -> Result<()> {
         Err(self.error(kind))
     }
 
-    fn error(&self, kind: ParseRecordKind) -> Error {
-        Error::ParseRecord { line_no: self.line_no, kind }
+    fn error(&self, kind: ErrorKind) -> Error {
+        Error {
+            line_no: self.line_no,
+            kind,
+        }
     }
 
-    fn parse(&mut self) -> Result<Record> {
+    fn parse(mut self) -> Result<Record> {
         self.skip_start_code()?;
         self.parse_byte_count()?;
         self.parse_address()?;
         self.parse_type()?;
         self.parse_data()?;
-
         // TODO: Verify checksum
-        todo!()
+        // TODO: Verify we're at the end of the line
+        
+        Ok(Record { data: self.data, addr: self.addr, kind: self.kind })
     }
 
     fn skip_start_code(&mut self) -> Result<()> {
@@ -84,19 +89,19 @@ impl<'a> RecordParser<'a> {
             self.line = remaining;
             Ok(())
         } else {
-            self.error_result(ParseRecordKind::Incomplete(RecordField::StartCode))
+            self.error_result(ErrorKind::Incomplete(RecordField::StartCode))
         }
     }
 
     fn parse_byte_count(&mut self) -> Result<()> {
         const BYTE_COUNT_NUM_DIGITS: usize = 2;
         if self.line.len() < BYTE_COUNT_NUM_DIGITS {
-            return self.error_result(ParseRecordKind::Incomplete(RecordField::ByteCount));
+            return self.error_result(ErrorKind::Incomplete(RecordField::ByteCount));
         }
         let digits = self.line[0..BYTE_COUNT_NUM_DIGITS].to_string();
         self.line = &self.line[BYTE_COUNT_NUM_DIGITS..];
         self.byte_count = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
-            self.error(ParseRecordKind::ParseHexDigits {
+            self.error(ErrorKind::ParseHexDigits {
                 digits,
                 field: HexDigitsField::ByteCount,
                 error: e,
@@ -108,12 +113,12 @@ impl<'a> RecordParser<'a> {
     fn parse_address(&mut self) -> Result<()> {
         const ADDRESS_NUM_DIGITS: usize = 4;
         if self.line.len() < ADDRESS_NUM_DIGITS {
-            return self.error_result(ParseRecordKind::Incomplete(RecordField::Address));
+            return self.error_result(ErrorKind::Incomplete(RecordField::Address));
         }
         let digits = self.line[0..ADDRESS_NUM_DIGITS].to_string();
         self.line = &self.line[ADDRESS_NUM_DIGITS..];
         self.addr = u16::from_str_radix(digits.as_str(), 16).map_err(|e| {
-            self.error(ParseRecordKind::ParseHexDigits {
+            self.error(ErrorKind::ParseHexDigits {
                 digits,
                 field: HexDigitsField::Address,
                 error: e,
@@ -125,35 +130,41 @@ impl<'a> RecordParser<'a> {
     fn parse_type(&mut self) -> Result<()> {
         const TYPE_NUM_DIGITS: usize = 2;
         if self.line.len() < TYPE_NUM_DIGITS {
-            return self.error_result(ParseRecordKind::Incomplete(RecordField::Type));
+            return self.error_result(ErrorKind::Incomplete(RecordField::Type));
         }
         let digits = self.line[0..TYPE_NUM_DIGITS].to_string();
         self.line = &self.line[TYPE_NUM_DIGITS..];
-        self.kind = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
-            self.error(ParseRecordKind::ParseHexDigits {
+        let kind = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
+            self.error(ErrorKind::ParseHexDigits {
                 digits,
                 field: HexDigitsField::Type,
                 error: e,
             })
         })?;
+        self.kind = RecordKind::from_int(kind).ok_or(self.error(ErrorKind::InvalidType(kind)))?;
         Ok(())
     }
 
     fn parse_data(&mut self) -> Result<()> {
+        // Return success immediately if the data field is omitted.
+        if self.byte_count == 0 {
+            return Ok(());
+        }
+
         const DIGITS_PER_BYTE: usize = 2;
         let num_digits = self.byte_count as usize * DIGITS_PER_BYTE;
         if self.line.len() < num_digits {
-            return self.error_result(ParseRecordKind::Incomplete(RecordField::Data));
+            return self.error_result(ErrorKind::Incomplete(RecordField::Data));
         }
         let digits = &self.line[0..num_digits];
         self.line = &self.line[num_digits..];
-        let mut data = vec![];
+        let mut data = Vec::with_capacity(self.byte_count as usize);
         for byte_idx in 0..self.byte_count {
             let digits_pair_idx = byte_idx as usize * DIGITS_PER_BYTE;
             let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
             let digits_pair = &digits[digits_pair_idx..next_pair_idx];
             let byte_val = u8::from_str_radix(digits_pair, 16).map_err(|e| {
-                self.error(ParseRecordKind::ParseData {
+                self.error(ErrorKind::ParseData {
                     digits: digits_pair.to_string(),
                     offset: digits_pair_idx,
                     error: e,
@@ -168,14 +179,14 @@ impl<'a> RecordParser<'a> {
 }
 
 #[derive(Default)]
-struct Record {
+pub struct Record {
     addr: u16,
     data: Vec<u8>,
     kind: RecordKind,
 }
 
 #[derive(Default)]
-enum RecordKind {
+pub enum RecordKind {
     #[default]
     Data,
     EndOfFile,
@@ -186,32 +197,28 @@ enum RecordKind {
 }
 
 impl RecordKind {
-    fn new(kind: u8) -> std::result::Result<Self, u8> {
+    fn from_int(kind: u8) -> Option<Self> {
         use RecordKind::*;
         match kind {
-            0 => Ok(Data),
-            1 => Ok(EndOfFile),
-            2 => Ok(ExtendedSegmentAddress),
-            3 => Ok(StartSegmentAddress),
-            4 => Ok(ExtendedLinearAddress),
-            5 => Ok(StartLinearAddress),
-            t => Err(t),
+            0 => Some(Data),
+            1 => Some(EndOfFile),
+            2 => Some(ExtendedSegmentAddress),
+            3 => Some(StartSegmentAddress),
+            4 => Some(ExtendedLinearAddress),
+            5 => Some(StartLinearAddress),
+            _ => None,
         }
     }
 }
 
 #[derive(Debug)]
-pub enum Error {
-    ReadFile(io::Error),
-    NotAscii,
-    ParseRecord {
-        line_no: usize,
-        kind: ParseRecordKind,
-    },
+pub struct Error {
+    line_no: usize,
+    kind: ErrorKind,
 }
 
 #[derive(Debug)]
-pub enum ParseRecordKind {
+pub enum ErrorKind {
     Incomplete(RecordField),
     ParseHexDigits {
         digits: String,
@@ -223,6 +230,7 @@ pub enum ParseRecordKind {
         offset: usize,
         error: ParseIntError,
     },
+    InvalidType(u8),
 }
 
 #[derive(Debug)]
@@ -240,18 +248,12 @@ pub enum HexDigitsField {
     ByteCount,
     Address,
     Type,
-    Data,
     Checksum,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use Error::*;
-        match self {
-            ReadFile(e) => write!(f, "failed to read the file: {e}"),
-            NotAscii => write!(f, "file contents not ASCII"),
-            ParseRecord { line_no: _, kind: _ } => write!(f, "failed to parse record"),
-        }
+        write!(f, "failed to parse record")
     }
 }
 
@@ -266,35 +268,36 @@ mod tests {
     #[test]
     fn finds_start_code() -> Result<()> {
         let line = ":0B0010006164647265737320676170A7";
-        let mut parser = RecordParser::new(1, line);
+        let mut parser = RecordParser::new(7, line);
         parser.skip_start_code()
     }
 
     #[test]
     fn returns_error_when_start_code_missing() {
         let line = "0B0010006164647265737320676170A7";
-        let mut parser = RecordParser::new(1, line);
+        let mut parser = RecordParser::new(7, line);
         let result = parser.skip_start_code();
-        assert!(result.is_err() && matches!(result,
-            Result::<()>::Err(Error::ParseRecord {
-                line_no: 1,
-                kind: ParseRecordKind::Incomplete(
-                    RecordField::StartCode)
-            }))
-        );
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            Error {
+                line_no: 7,
+                kind: ErrorKind::Incomplete(RecordField::StartCode)
+            }
+        ));
     }
 
     #[test]
     fn skips_characters_before_start_code() -> Result<()> {
         let line = "abcd:0B0010006164647265737320676170A7";
-        let mut parser = RecordParser::new(1, line);
+        let mut parser = RecordParser::new(7, line);
         parser.skip_start_code()
     }
 
     #[test]
     fn parses_byte_count() -> Result<()> {
         let line = ":0B0010006164647265737320676170A7";
-        let mut parser = RecordParser::new(1, line);
+        let mut parser = RecordParser::new(7, line);
         parser.skip_start_code()?;
         parser.parse_byte_count()?;
         assert_eq!(parser.byte_count, 11);
