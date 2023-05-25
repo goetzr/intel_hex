@@ -4,7 +4,10 @@ use std::num::ParseIntError;
 
 /// NOTE: For efficiency, it's assumed that the specified Hex file contents contains only ASCII characters.
 pub fn records<'c>(content: &'c str) -> Records<'c> {
-    Records { content, line_no: 0 }
+    Records {
+        content,
+        line_no: 0,
+    }
 }
 
 pub struct Records<'c> {
@@ -16,18 +19,19 @@ impl<'c> Iterator for Records<'c> {
     type Item = Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let line = match
-            self.content
+        let line = match self
+            .content
             .lines()
             .map(|l| {
                 self.line_no += 1;
                 l
             })
             .filter(|l| !l.is_empty())
-            .next() {
-                Some(line) => line,
-                None => return None,
-            };
+            .next()
+        {
+            Some(line) => line,
+            None => return None,
+        };
         match self.parse_record(self.line_no, line) {
             Ok(rec) => Some(Ok(rec)),
             Err(e) => Some(Err(e)),
@@ -80,8 +84,12 @@ impl<'l> RecordParser<'l> {
         self.parse_data()?;
         // TODO: Verify checksum
         // TODO: Verify we're at the end of the line
-        
-        Ok(Record { data: self.data, addr: self.addr, kind: self.kind })
+
+        Ok(Record {
+            data: self.data,
+            addr: self.addr,
+            kind: self.kind,
+        })
     }
 
     fn skip_start_code(&mut self) -> Result<()> {
@@ -298,16 +306,25 @@ mod tests {
     fn parses_byte_count() -> Result<()> {
         let line = ":0B0010006164647265737320676170A7";
         let mut parser = RecordParser::new(7, line);
-        parser.skip_start_code()?;
-        parser.parse_byte_count()?;
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())?;
         assert_eq!(parser.byte_count, 11);
         Ok(())
     }
 
-    // fn returns_error_when_byte_count_invalid() {
-    //     let line = ":0H0010006164647265737320676170A7";
-    //     let mut parser = RecordParser::new(1, line);
-    //     parser.skip_start_code()?;
-    //     assert!(parser.parse_byte_count().is_err());
-    // }
+    #[test]
+    fn returns_error_when_byte_count_invalid() {
+        let line = ":0H0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        let result = parser.parse_byte_count();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::ParseHexDigits { digits, field: HexDigitsField::ByteCount, error: _ } if digits == "0H" => (),
+            _ => panic!(),
+        };
+    }
 }
