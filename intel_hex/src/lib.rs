@@ -54,6 +54,8 @@ struct RecordParser<'l> {
     addr: u16,
     kind: RecordKind,
     data: Vec<u8>,
+    byte_vals: &'l str,
+    checksum: u8,
 }
 
 impl<'l> RecordParser<'l> {
@@ -82,8 +84,16 @@ impl<'l> RecordParser<'l> {
         self.parse_address()?;
         self.parse_type()?;
         self.parse_data()?;
-        // TODO: Verify checksum
-        // TODO: Verify we're at the end of the line
+        self.parse_checksum()?;
+        self.verify_checksum()?;
+
+        // A record should end with its checksum.
+        if !self.line.is_empty() {
+            return Err(Error {
+                line_no: self.line_no,
+                kind: ErrorKind::ExtraData(self.line.to_string()),
+            });
+        }
 
         Ok(Record {
             data: self.data,
@@ -95,6 +105,9 @@ impl<'l> RecordParser<'l> {
     fn skip_start_code(&mut self) -> Result<()> {
         if let Some((_, remaining)) = self.line.split_once(':') {
             self.line = remaining;
+            // Don't include the checksum itself in the checksum.
+            const CS_NUM_DIGITS: usize = 2;
+            self.byte_vals = &self.line[..self.line.len() - CS_NUM_DIGITS];
             Ok(())
         } else {
             self.error_result(ErrorKind::Incomplete(RecordField::StartCode))
@@ -184,6 +197,33 @@ impl<'l> RecordParser<'l> {
 
         Ok(())
     }
+
+    fn parse_checksum(&mut self) -> Result<()> {
+        const CS_NUM_DIGITS: usize = 2;
+        if self.line.len() < CS_NUM_DIGITS {
+            return self.error_result(ErrorKind::Incomplete(RecordField::Checksum));
+        }
+        let digits = self.line[0..CS_NUM_DIGITS].to_string();
+        self.line = &self.line[CS_NUM_DIGITS..];
+        self.checksum = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
+            self.error(ErrorKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::Checksum,
+                error: e,
+            })
+        })?;
+        Ok(())
+    }
+
+    fn verify_checksum(&mut self) -> Result<()> {
+        //self.byte_vals
+
+        // let subs = string.as_bytes()
+        //     .chunks(sub_len)
+        //     .map(|buf| unsafe { str::from_utf8_unchecked(buf) })
+        //     .collect::<Vec<&str>>();
+    
+    }
 }
 
 #[derive(Default)]
@@ -239,6 +279,7 @@ pub enum ErrorKind {
         error: ParseIntError,
     },
     InvalidType(u8),
+    ExtraData(String),
 }
 
 #[derive(Debug)]
@@ -323,7 +364,235 @@ mod tests {
         let err = result.err().unwrap();
         assert_eq!(err.line_no, 7);
         match err.kind {
-            ErrorKind::ParseHexDigits { digits, field: HexDigitsField::ByteCount, error: _ } if digits == "0H" => (),
+            ErrorKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::ByteCount,
+                error: _,
+            } if digits == "0H" => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn returns_error_when_byte_count_incomplete() {
+        let line = ":0";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        let result = parser.parse_byte_count();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::Incomplete(RecordField::ByteCount) => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn parses_address() -> Result<()> {
+        let line = ":0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())?;
+        assert_eq!(parser.addr, 16);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_error_when_address_invalid() {
+        let line = ":0B00H0006164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        parser.parse_byte_count().unwrap();
+        let result = parser.parse_address();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::ParseHexDigits {
+                digits,
+                field: HexDigitsField::Address,
+                error: _,
+            } if digits == "00H0" => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn returns_error_when_address_incomplete() {
+        let line = ":0B001";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        parser.parse_byte_count().unwrap();
+        let result = parser.parse_address();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::Incomplete(RecordField::Address) => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn parses_type_when_data() -> Result<()> {
+        let line = ":0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::Data);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_type_when_eof() -> Result<()> {
+        let line = ":0B0010016164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::EndOfFile);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_type_when_ext_seg_addr() -> Result<()> {
+        let line = ":0B0010026164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::ExtendedSegmentAddress);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_type_when_start_seg_addr() -> Result<()> {
+        let line = ":0B0010036164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::StartSegmentAddress);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_type_when_ext_lin_addr() -> Result<()> {
+        let line = ":0B0010046164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::ExtendedLinearAddress);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_type_when_start_lin_addr() -> Result<()> {
+        let line = ":0B0010056164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())?;
+        matches!(parser.kind, RecordKind::StartLinearAddress);
+        Ok(())
+    }
+
+    #[test]
+    fn returns_error_when_type_invalid() {
+        let line = ":0B0010066164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        parser.parse_byte_count().unwrap();
+        parser.parse_address().unwrap();
+        let result = parser.parse_type();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::InvalidType(6) => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn returns_error_when_type_incomplete() {
+        let line = ":0B00100";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        parser.parse_byte_count().unwrap();
+        parser.parse_address().unwrap();
+        let result = parser.parse_type();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::Incomplete(RecordField::Type) => (),
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    fn parses_data() -> Result<()> {
+        let line = ":0B0010006164647265737320676170A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())
+            .and_then(|()| parser.parse_data())?;
+        assert_eq!(
+            parser.data,
+            vec![0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x20, 0x67, 0x61, 0x70]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_empty_data() -> Result<()> {
+        let line = ":00001000A7";
+        let mut parser = RecordParser::new(7, line);
+        parser
+            .skip_start_code()
+            .and_then(|()| parser.parse_byte_count())
+            .and_then(|()| parser.parse_address())
+            .and_then(|()| parser.parse_type())
+            .and_then(|()| parser.parse_data())?;
+        assert!(!parser.line.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn returns_error_when_data_incomplete() {
+        let line = ":0B00100061646472657373206761";
+        let mut parser = RecordParser::new(7, line);
+        parser.skip_start_code().unwrap();
+        parser.parse_byte_count().unwrap();
+        parser.parse_address().unwrap();
+        parser.parse_type().unwrap();
+        let result = parser.parse_data();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.line_no, 7);
+        match err.kind {
+            ErrorKind::Incomplete(RecordField::Data) => (),
             _ => panic!(),
         };
     }
