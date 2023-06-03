@@ -2,28 +2,36 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::num::ParseIntError;
 
-/// NOTE: For efficiency, it's assumed that the specified Hex file contents contains only ASCII characters.
-pub fn records<'c>(content: &'c str) -> Records<'c> {
-    Records {
-        content,
-        line_no: 0,
-    }
+use ascii::{AsciiStr, AsciiChar};
+
+pub fn records<'c>(content: &'c AsciiStr) -> Records<'c> {
+    Records::new(content)
 }
 
 pub struct Records<'c> {
-    content: &'c str,
-    line_no: usize,
+    lines: Vec<&'c AsciiStr>,
+    line_idx: usize,
+}
+
+impl<'c> Records<'c> {
+    fn new(content: &'c AsciiStr) -> Self {
+        let lines = content.lines().collect();
+        Records { lines, line_idx: 0 }
+    }
 }
 
 impl<'c> Iterator for Records<'c> {
     type Item = Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let line = match self
-            .content
-            .lines()
-            .map(|l| {
-                self.line_no += 1;
+        if self.line_idx == self.lines.len() {
+            return None;
+        }
+
+        let line = match self.lines[self.line_idx..]
+            .iter()
+            .map(|&l| {
+                self.line_idx += 1;
                 l
             })
             .filter(|l| !l.is_empty())
@@ -32,34 +40,34 @@ impl<'c> Iterator for Records<'c> {
             Some(line) => line,
             None => return None,
         };
-        match self.parse_record(self.line_no, line) {
+
+        // self.line_idx was incremented above, so it holds the line number of line.
+        match parse_record(self.line_idx, line) {
             Ok(rec) => Some(Ok(rec)),
             Err(e) => Some(Err(e)),
         }
     }
 }
 
-impl<'c> Records<'c> {
-    fn parse_record(&mut self, line_no: usize, line: &str) -> Result<Record> {
-        let parser = RecordParser::new(line_no, line);
-        parser.parse()
-    }
+fn parse_record(line_no: usize, line: &AsciiStr) -> Result<Record> {
+    let parser = RecordParser::new(line_no, line);
+    parser.parse()
 }
 
 #[derive(Default)]
-struct RecordParser<'l> {
+struct RecordParser<'c> {
     line_no: usize,
-    line: &'l str,
+    line: &'c AsciiStr,
     byte_count: u8,
     addr: u16,
     kind: RecordKind,
     data: Vec<u8>,
-    byte_vals: &'l str,
+    bytes_to_verify: &'c AsciiStr,
     checksum: u8,
 }
 
-impl<'l> RecordParser<'l> {
-    fn new(line_no: usize, line: &'l str) -> Self {
+impl<'c> RecordParser<'c> {
+    fn new(line_no: usize, line: &'c AsciiStr) -> Self {
         RecordParser {
             line_no,
             line,
@@ -96,22 +104,26 @@ impl<'l> RecordParser<'l> {
         }
 
         Ok(Record {
-            data: self.data,
-            addr: self.addr,
             kind: self.kind,
+            addr: self.addr,
+            data: self.data,
         })
     }
 
     fn skip_start_code(&mut self) -> Result<()> {
-        if let Some((_, remaining)) = self.line.split_once(':') {
-            self.line = remaining;
-            // Don't include the checksum itself in the checksum.
-            const CS_NUM_DIGITS: usize = 2;
-            self.byte_vals = &self.line[..self.line.len() - CS_NUM_DIGITS];
-            Ok(())
-        } else {
-            self.error_result(ErrorKind::Incomplete(RecordField::StartCode))
+        let parts: Vec<&AsciiStr> = self.line.split(AsciiChar::new(':')).collect();
+        if parts.len() == 1 {
+            return self.error_result(ErrorKind::Incomplete(RecordField::StartCode));
         }
+        if parts.len() > 2 {
+            return self.error_result(ErrorKind::MultipleStartCodes);
+        }
+
+        self.line = parts[1];
+        // All bytes after the start code, except for the checksum field,
+        // must be verified by the checksum.
+        self.bytes_to_verify = self.line;
+        Ok(())
     }
 
     fn parse_byte_count(&mut self) -> Result<()> {
@@ -119,6 +131,7 @@ impl<'l> RecordParser<'l> {
         if self.line.len() < BYTE_COUNT_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::ByteCount));
         }
+        
         let digits = self.line[0..BYTE_COUNT_NUM_DIGITS].to_string();
         self.line = &self.line[BYTE_COUNT_NUM_DIGITS..];
         self.byte_count = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
@@ -136,6 +149,7 @@ impl<'l> RecordParser<'l> {
         if self.line.len() < ADDRESS_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Address));
         }
+
         let digits = self.line[0..ADDRESS_NUM_DIGITS].to_string();
         self.line = &self.line[ADDRESS_NUM_DIGITS..];
         self.addr = u16::from_str_radix(digits.as_str(), 16).map_err(|e| {
@@ -153,6 +167,7 @@ impl<'l> RecordParser<'l> {
         if self.line.len() < TYPE_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Type));
         }
+
         let digits = self.line[0..TYPE_NUM_DIGITS].to_string();
         self.line = &self.line[TYPE_NUM_DIGITS..];
         let kind = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
@@ -177,6 +192,7 @@ impl<'l> RecordParser<'l> {
         if self.line.len() < num_digits {
             return self.error_result(ErrorKind::Incomplete(RecordField::Data));
         }
+
         let digits = &self.line[0..num_digits];
         self.line = &self.line[num_digits..];
         let mut data = Vec::with_capacity(self.byte_count as usize);
@@ -184,7 +200,7 @@ impl<'l> RecordParser<'l> {
             let digits_pair_idx = byte_idx as usize * DIGITS_PER_BYTE;
             let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
             let digits_pair = &digits[digits_pair_idx..next_pair_idx];
-            let byte_val = u8::from_str_radix(digits_pair, 16).map_err(|e| {
+            let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
                 self.error(ErrorKind::ParseData {
                     digits: digits_pair.to_string(),
                     offset: digits_pair_idx,
@@ -203,6 +219,7 @@ impl<'l> RecordParser<'l> {
         if self.line.len() < CS_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Checksum));
         }
+
         let digits = self.line[0..CS_NUM_DIGITS].to_string();
         self.line = &self.line[CS_NUM_DIGITS..];
         self.checksum = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
@@ -216,21 +233,23 @@ impl<'l> RecordParser<'l> {
     }
 
     fn verify_checksum(&mut self) -> Result<()> {
+        const CS_NUM_DIGITS: usize = 2;
+        let bytes_to_verify = &self.bytes_to_verify[..self.bytes_to_verify.len() - CS_NUM_DIGITS];
+        // TODO extract function that iterates over digit pairs and returns Vec<u8> then have this function and parse_data call it
         //self.byte_vals
 
         // let subs = string.as_bytes()
         //     .chunks(sub_len)
         //     .map(|buf| unsafe { str::from_utf8_unchecked(buf) })
         //     .collect::<Vec<&str>>();
-    
     }
 }
 
 #[derive(Default)]
 pub struct Record {
+    kind: RecordKind,
     addr: u16,
     data: Vec<u8>,
-    kind: RecordKind,
 }
 
 #[derive(Default)]
@@ -268,6 +287,7 @@ pub struct Error {
 #[derive(Debug)]
 pub enum ErrorKind {
     Incomplete(RecordField),
+    MultipleStartCodes,
     ParseHexDigits {
         digits: String,
         field: HexDigitsField,
