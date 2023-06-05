@@ -245,6 +245,28 @@ impl<'c> RecordParser<'c> {
     }
 }
 
+/// NOTE: Assumes that hex_digits contains an even number of characters.
+fn hex_to_bytes(hex_digits: &AsciiStr) -> Vec<u8> {
+    assert!(hex_digits.len() % 2 == 0, "a hex digit string must contain an even number of digits");
+    const DIGITS_PER_BYTE: usize = 2;
+    let num_bytes = hex_digits.len() / DIGITS_PER_BYTE;
+    let mut bytes = Vec::with_capacity(num_bytes);
+    for byte_idx in 0..num_bytes {
+        let digits_pair_idx = byte_idx * DIGITS_PER_BYTE;
+        let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
+        let digits_pair = &digits[digits_pair_idx..next_pair_idx];
+        let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
+            self.error(ErrorKind::ParseData {
+                digits: digits_pair.to_string(),
+                offset: digits_pair_idx,
+                error: e,
+            })
+        })?;
+        bytes.push(byte_val);
+    }
+    bytes
+}
+
 #[derive(Default)]
 pub struct Record {
     kind: RecordKind,
