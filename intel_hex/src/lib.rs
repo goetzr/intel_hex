@@ -58,11 +58,13 @@ fn parse_record(line_no: usize, line: &AsciiStr) -> Result<Record> {
 struct RecordParser<'c> {
     line_no: usize,
     line: &'c AsciiStr,
+    index: usize,
     byte_count: u8,
     addr: u16,
     kind: RecordKind,
     data: Vec<u8>,
-    bytes_to_verify: &'c AsciiStr,
+    cs_data_start: usize,
+    cs_data_end: usize,
     checksum: u8,
 }
 
@@ -71,8 +73,24 @@ impl<'c> RecordParser<'c> {
         RecordParser {
             line_no,
             line,
+            index: 0,
             ..Default::default()
         }
+    }
+
+    const START_CODE_CHAR: AsciiChar = AsciiChar::new(':');
+    const BYTE_COUNT_NUM_DIGITS: usize = 2;
+    const ADDRESS_NUM_DIGITS: usize = 4;
+    const TYPE_NUM_DIGITS: usize = 2;
+    const DIGITS_PER_BYTE: usize = 2;
+    const CS_NUM_DIGITS: usize = 2;
+
+    fn remaining(&self) -> &'c AsciiStr {
+        &self.line[self.index..]
+    }
+
+    fn advance(&mut self, amount: usize) {
+        self.index += amount;
     }
 
     fn error_result(&self, kind: ErrorKind) -> Result<()> {
@@ -96,10 +114,11 @@ impl<'c> RecordParser<'c> {
         self.verify_checksum()?;
 
         // A record should end with its checksum.
-        if !self.line.is_empty() {
+        let remaining = self.remaining();
+        if !remaining.is_empty() {
             return Err(Error {
                 line_no: self.line_no,
-                kind: ErrorKind::ExtraData(self.line.to_string()),
+                kind: ErrorKind::ExtraData(remaining.to_string()),
             });
         }
 
@@ -111,7 +130,8 @@ impl<'c> RecordParser<'c> {
     }
 
     fn skip_start_code(&mut self) -> Result<()> {
-        let parts: Vec<&AsciiStr> = self.line.split(AsciiChar::new(':')).collect();
+        let remaining = self.remaining();
+        let parts: Vec<&AsciiStr> = remaining.split(RecordParser::START_CODE_CHAR).collect();
         if parts.len() == 1 {
             return self.error_result(ErrorKind::Incomplete(RecordField::StartCode));
         }
@@ -119,21 +139,24 @@ impl<'c> RecordParser<'c> {
             return self.error_result(ErrorKind::MultipleStartCodes);
         }
 
-        self.line = parts[1];
-        // All bytes after the start code, except for the checksum field,
-        // must be verified by the checksum.
-        self.bytes_to_verify = self.line;
+        // Skip over any characters before the start code and the start code itself.
+        self.advance(parts[0].len() + 1);
+
+        // The bytes to verify with the checksum start immediately after the start code.
+        self.cs_data_start = self.index;
+
         Ok(())
     }
 
     fn parse_byte_count(&mut self) -> Result<()> {
-        const BYTE_COUNT_NUM_DIGITS: usize = 2;
-        if self.line.len() < BYTE_COUNT_NUM_DIGITS {
+        let remaining = self.remaining();
+        if remaining.len() < RecordParser::BYTE_COUNT_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::ByteCount));
         }
         
-        let digits = self.line[0..BYTE_COUNT_NUM_DIGITS].to_string();
-        self.line = &self.line[BYTE_COUNT_NUM_DIGITS..];
+        let digits = remaining[..RecordParser::BYTE_COUNT_NUM_DIGITS].to_string();
+        self.advance(RecordParser::BYTE_COUNT_NUM_DIGITS);
+
         self.byte_count = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
             self.error(ErrorKind::ParseHexDigits {
                 digits,
@@ -141,17 +164,19 @@ impl<'c> RecordParser<'c> {
                 error: e,
             })
         })?;
+
         Ok(())
     }
 
     fn parse_address(&mut self) -> Result<()> {
-        const ADDRESS_NUM_DIGITS: usize = 4;
-        if self.line.len() < ADDRESS_NUM_DIGITS {
+        let remaining = self.remaining();
+        if remaining.len() < RecordParser::ADDRESS_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Address));
         }
 
-        let digits = self.line[0..ADDRESS_NUM_DIGITS].to_string();
-        self.line = &self.line[ADDRESS_NUM_DIGITS..];
+        let digits = remaining[RecordParser::ADDRESS_NUM_DIGITS].to_string();
+        self.advance(RecordParser::ADDRESS_NUM_DIGITS);
+
         self.addr = u16::from_str_radix(digits.as_str(), 16).map_err(|e| {
             self.error(ErrorKind::ParseHexDigits {
                 digits,
@@ -159,17 +184,19 @@ impl<'c> RecordParser<'c> {
                 error: e,
             })
         })?;
+
         Ok(())
     }
 
     fn parse_type(&mut self) -> Result<()> {
-        const TYPE_NUM_DIGITS: usize = 2;
-        if self.line.len() < TYPE_NUM_DIGITS {
+        let remaining = self.remaining();
+        if remaining.len() < RecordParser::TYPE_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Type));
         }
 
-        let digits = self.line[0..TYPE_NUM_DIGITS].to_string();
-        self.line = &self.line[TYPE_NUM_DIGITS..];
+        let digits = remaining[..RecordParser::TYPE_NUM_DIGITS].to_string();
+        self.advance(RecordParser::TYPE_NUM_DIGITS);
+
         let kind = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
             self.error(ErrorKind::ParseHexDigits {
                 digits,
@@ -178,6 +205,7 @@ impl<'c> RecordParser<'c> {
             })
         })?;
         self.kind = RecordKind::from_int(kind).ok_or(self.error(ErrorKind::InvalidType(kind)))?;
+
         Ok(())
     }
 
@@ -187,18 +215,19 @@ impl<'c> RecordParser<'c> {
             return Ok(());
         }
 
-        const DIGITS_PER_BYTE: usize = 2;
-        let num_digits = self.byte_count as usize * DIGITS_PER_BYTE;
-        if self.line.len() < num_digits {
+        let remaining = self.remaining();
+        let num_digits = self.byte_count as usize * RecordParser::DIGITS_PER_BYTE;
+        if remaining.len() < num_digits {
             return self.error_result(ErrorKind::Incomplete(RecordField::Data));
         }
 
-        let digits = &self.line[0..num_digits];
-        self.line = &self.line[num_digits..];
+        let digits = &remaining[..num_digits];
+        self.advance(num_digits);
+
         let mut data = Vec::with_capacity(self.byte_count as usize);
         for byte_idx in 0..self.byte_count {
-            let digits_pair_idx = byte_idx as usize * DIGITS_PER_BYTE;
-            let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
+            let digits_pair_idx = byte_idx as usize * RecordParser::DIGITS_PER_BYTE;
+            let next_pair_idx = digits_pair_idx + RecordParser::DIGITS_PER_BYTE;
             let digits_pair = &digits[digits_pair_idx..next_pair_idx];
             let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
                 self.error(ErrorKind::ParseData {
@@ -215,13 +244,14 @@ impl<'c> RecordParser<'c> {
     }
 
     fn parse_checksum(&mut self) -> Result<()> {
-        const CS_NUM_DIGITS: usize = 2;
-        if self.line.len() < CS_NUM_DIGITS {
+        let remaining = self.remaining();
+        if remaining.len() < RecordParser::CS_NUM_DIGITS {
             return self.error_result(ErrorKind::Incomplete(RecordField::Checksum));
         }
 
-        let digits = self.line[0..CS_NUM_DIGITS].to_string();
-        self.line = &self.line[CS_NUM_DIGITS..];
+        let digits = remaining[..RecordParser::CS_NUM_DIGITS].to_string();
+        self.advance(RecordParser::CS_NUM_DIGITS);
+
         self.checksum = u8::from_str_radix(digits.as_str(), 16).map_err(|e| {
             self.error(ErrorKind::ParseHexDigits {
                 digits,
@@ -229,6 +259,7 @@ impl<'c> RecordParser<'c> {
                 error: e,
             })
         })?;
+        
         Ok(())
     }
 
