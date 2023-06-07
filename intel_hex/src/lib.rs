@@ -224,21 +224,7 @@ impl<'c> RecordParser<'c> {
         let digits = &remaining[..num_digits];
         self.advance(num_digits);
 
-        let mut data = Vec::with_capacity(self.byte_count as usize);
-        for byte_idx in 0..self.byte_count {
-            let digits_pair_idx = byte_idx as usize * RecordParser::DIGITS_PER_BYTE;
-            let next_pair_idx = digits_pair_idx + RecordParser::DIGITS_PER_BYTE;
-            let digits_pair = &digits[digits_pair_idx..next_pair_idx];
-            let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
-                self.error(ErrorKind::ParseData {
-                    digits: digits_pair.to_string(),
-                    offset: digits_pair_idx,
-                    error: e,
-                })
-            })?;
-            data.push(byte_val);
-        }
-        self.data = data;
+        self.data = self.hex_to_bytes(digits)?;
 
         Ok(())
     }
@@ -274,28 +260,25 @@ impl<'c> RecordParser<'c> {
         //     .map(|buf| unsafe { str::from_utf8_unchecked(buf) })
         //     .collect::<Vec<&str>>();
     }
-}
 
-/// NOTE: Assumes that hex_digits contains an even number of characters.
-fn hex_to_bytes(hex_digits: &AsciiStr) -> Vec<u8> {
-    assert!(hex_digits.len() % 2 == 0, "a hex digit string must contain an even number of digits");
-    const DIGITS_PER_BYTE: usize = 2;
-    let num_bytes = hex_digits.len() / DIGITS_PER_BYTE;
-    let mut bytes = Vec::with_capacity(num_bytes);
-    for byte_idx in 0..num_bytes {
-        let digits_pair_idx = byte_idx * DIGITS_PER_BYTE;
-        let next_pair_idx = digits_pair_idx + DIGITS_PER_BYTE;
-        let digits_pair = &digits[digits_pair_idx..next_pair_idx];
-        let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
-            self.error(ErrorKind::ParseData {
-                digits: digits_pair.to_string(),
-                offset: digits_pair_idx,
-                error: e,
-            })
-        })?;
-        bytes.push(byte_val);
+    fn hex_to_bytes(&self, hex_digits: &AsciiStr) -> Result<Vec<u8>> {
+        assert!(hex_digits.len() % 2 == 0, "a hex digit string must contain an even number of digits");
+        let num_bytes = hex_digits.len() / RecordParser::DIGITS_PER_BYTE;
+        let mut bytes = Vec::with_capacity(num_bytes);
+        for pair_idx in (0..hex_digits.len()).step_by(RecordParser::DIGITS_PER_BYTE) {
+            let pair_end = pair_idx + RecordParser::DIGITS_PER_BYTE;
+            let digits_pair = &hex_digits[pair_idx..pair_end];
+            let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
+                self.error(ErrorKind::ParseData {
+                    digits: digits_pair.to_string(),
+                    offset: pair_idx,
+                    error: e,
+                })
+            })?;
+            bytes.push(byte_val);
+        }
+        Ok(bytes)
     }
-    bytes
 }
 
 #[derive(Default)]
