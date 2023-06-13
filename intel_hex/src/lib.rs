@@ -287,6 +287,24 @@ impl<'c> RecordParser<'c> {
         }
         Ok(bytes)
     }
+
+    fn hex_to_bytes2(&self, hex_digits: &AsciiStr) -> std::result::Result<Vec<u8>, ParseIntError> {
+        const DIGITS_PER_BYTE: usize = 2;
+        assert!(hex_digits.len() % DIGITS_PER_BYTE == 0, "hex string must contain an even number of hex digits");
+        let num_bytes = hex_digits.len() / DIGITS_PER_BYTE;
+        let mut bytes = Vec::with_capacity(num_bytes);
+        for digit_pair in hex_digits.as_slice().chunks(DIGITS_PER_BYTE) {
+            let byte_val = u8::from_str_radix(, 16).map_err(|e| {
+                self.error(ErrorKind::ParseBytes {
+                    digits: digit_pair.to_string(),
+                    offset: pair_start,
+                    error: e,
+                })
+            })?;
+            bytes.push(byte_val);
+        }
+        Ok(bytes)
+    }
 }
 
 #[derive(Default)]
