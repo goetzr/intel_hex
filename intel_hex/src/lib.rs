@@ -58,7 +58,6 @@ fn parse_record(line_no: usize, line: &AsciiStr) -> Result<Record> {
 struct RecordParser<'c> {
     line_no: usize,
     line: &'c AsciiStr,
-    index: usize,
     byte_count: u8,
     addr: u16,
     kind: RecordKind,
@@ -68,12 +67,19 @@ struct RecordParser<'c> {
     checksum: u8,
 }
 
+/*
+Find start code
+Parse remaining hex digit string as byte vector
+Parse fields from byte vector using bytes crate
+Call Buf::copy_to_bytes to shallow copy data into separate Bytes instance
+    Is this worth it? Copying data may be faster as data is short.
+ */
+
 impl<'c> RecordParser<'c> {
     fn new(line_no: usize, line: &'c AsciiStr) -> Self {
         RecordParser {
             line_no,
             line,
-            index: 0,
             ..Default::default()
         }
     }
@@ -250,8 +256,9 @@ impl<'c> RecordParser<'c> {
     }
 
     fn verify_checksum(&mut self) -> Result<()> {
-        const CS_NUM_DIGITS: usize = 2;
-        let bytes_to_verify = &self.bytes_to_verify[..self.bytes_to_verify.len() - CS_NUM_DIGITS];
+        todo!();
+        //const CS_NUM_DIGITS: usize = 2;
+        //let bytes_to_verify = &self.bytes_to_verify[..self.bytes_to_verify.len() - CS_NUM_DIGITS];
         // TODO extract function that iterates over digit pairs and returns Vec<u8> then have this function and parse_data call it
         //self.byte_vals
 
@@ -261,17 +268,18 @@ impl<'c> RecordParser<'c> {
         //     .collect::<Vec<&str>>();
     }
 
-    fn hex_to_bytes(&self, hex_digits: &AsciiStr) -> Result<Vec<u8>> {
-        assert!(hex_digits.len() % 2 == 0, "a hex digit string must contain an even number of digits");
-        let num_bytes = hex_digits.len() / RecordParser::DIGITS_PER_BYTE;
+    fn hex_to_bytes(&self, hex_digits: &AsciiStr) -> std::result::Result<Vec<u8>, ParseIntError> {
+        const DPB: usize = RecordParser::DIGITS_PER_BYTE;
+        assert!(hex_digits.len() % DPB == 0, "invalid hex digit string");
+        let num_bytes = hex_digits.len() / DPB;
         let mut bytes = Vec::with_capacity(num_bytes);
-        for pair_idx in (0..hex_digits.len()).step_by(RecordParser::DIGITS_PER_BYTE) {
-            let pair_end = pair_idx + RecordParser::DIGITS_PER_BYTE;
-            let digits_pair = &hex_digits[pair_idx..pair_end];
+        for pair_start in (0..hex_digits.len()).step_by(DPB) {
+            let pair_end = pair_start + DPB;
+            let digits_pair = &hex_digits[pair_start..pair_end];
             let byte_val = u8::from_str_radix(digits_pair.as_str(), 16).map_err(|e| {
-                self.error(ErrorKind::ParseData {
+                self.error(ErrorKind::ParseBytes {
                     digits: digits_pair.to_string(),
-                    offset: pair_idx,
+                    offset: pair_start,
                     error: e,
                 })
             })?;
@@ -324,9 +332,9 @@ pub struct Error {
 pub enum ErrorKind {
     Incomplete(RecordField),
     MultipleStartCodes,
-    ParseHexDigits {
+    ParseIntField {
         digits: String,
-        field: HexDigitsField,
+        field: HexIntField,
         error: ParseIntError,
     },
     ParseData {
@@ -349,7 +357,7 @@ pub enum RecordField {
 }
 
 #[derive(Debug)]
-pub enum HexDigitsField {
+pub enum HexIntField {
     ByteCount,
     Address,
     Type,
