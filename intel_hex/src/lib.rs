@@ -4,6 +4,8 @@ use std::num::ParseIntError;
 
 use ascii::{AsciiStr, AsciiChar};
 
+mod hex;
+
 pub fn records<'c>(content: &'c AsciiStr) -> Records<'c> {
     Records::new(content)
 }
