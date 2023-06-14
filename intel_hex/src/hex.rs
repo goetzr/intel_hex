@@ -9,6 +9,7 @@ const DIGITS_PER_BYTE: usize = 2;
 //     unimplemented!();
 // }
 
+// TODO ditch the ascii crate and just check is_ascii
 fn decode_hex_digit(digit: AsciiChar) -> Result<u8> {
     let digit = digit.as_char();
     match digit {
