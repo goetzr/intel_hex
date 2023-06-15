@@ -1,7 +1,5 @@
 use std::fmt;
 
-use ascii::{AsciiStr, AsciiChar};
-
 const DIGITS_PER_BYTE: usize = 2;
 
 // pub fn hex_to_bytes(hex_string: &AsciiStr) -> Result<Vec<u8>> {
@@ -10,7 +8,7 @@ const DIGITS_PER_BYTE: usize = 2;
 // }
 
 // TODO ditch the ascii crate and just check is_ascii
-fn decode_hex_digit(digit: AsciiChar) -> Result<u8> {
+fn decode_hex_digit() -> Result<u8> {
     let digit = digit.as_char();
     match digit {
         '0'..='9' => Ok(digit as u8 - '0' as u8),
