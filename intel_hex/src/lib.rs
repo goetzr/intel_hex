@@ -1,9 +1,27 @@
+use std::fmt;
+
 /// let content = std::fs::read("/path/to/intel_hex_file");
-/// for rec in records(&content) {
+/// let parser = HexFileParser::new(&content)?;
+/// for rec in parser.records() {
 ///     // process rec
 /// }
-pub fn records(content: &[u8]) -> Records {
-    Records::new(content)
+
+struct HexFileParser<'a> {
+    content: &'a [u8],
+}
+
+impl<'a> HexFileParser<'a> {
+    fn new(content: &'a [u8]) -> Result<Self> {
+        if content.is_ascii() {
+            Ok(HexFileParser { content })
+        } else {
+            Err(Error::NotAscii)
+        }
+    }
+
+    fn records(&self) -> Records {
+        Records::new(self.content)
+    }
 }
 
 pub struct Records<'a> {
@@ -12,12 +30,15 @@ pub struct Records<'a> {
 
 impl<'a> Records<'a> {
     fn new(content: &'a [u8]) -> Self {
-        // TODO: Ensure contents are ASCII. Return result.
         Records { content }
     }
 
-    fn skip_to_next_record(&mut self) {
-        self.content.
+    fn find_next_record(&mut self) -> Option<&[u8]> {
+        if let Some(pos) = self.content.iter().position(|&b| b == START_CODE_CHAR) {
+            Some(&self.content[(pos + 1)..])
+        } else {
+            None
+        }
     }
 }
 
@@ -25,7 +46,10 @@ impl<'a> Iterator for Records<'a> {
     type Item = Record;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        self.content = match self.find_next_record() {
+            Some(record_start) => record_start,
+            None => return None
+        };
     }
 }
 
@@ -45,3 +69,18 @@ pub enum RecordKind {
     ExtendedLinearAddress,
     StartLinearAddress,
 }
+
+#[derive(Debug)]
+enum Error {
+    NotAscii,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "error")
+    }
+}
+
+impl std::error::Error for Error {}
+
+type Result<T> = std::result::Result<T, Error>;
