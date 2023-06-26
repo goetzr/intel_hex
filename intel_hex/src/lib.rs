@@ -40,6 +40,18 @@ impl HexFileParser {
     // Only Data records would be stored. Other records would be processed inline.
     // Think about End of File records.
     // Ignore Start Segment/Linear Address records.
+    //
+    // Hex files do not need to contain contiguous data.
+    // Bytes not specified in the hex file should not be set.
+    // The data in hex files is not intended to be written to files.
+    // It's intended to be written to EEPROM.
+    //
+    // Line endings are not required. Start code marks the start of the next record.
+    //
+    // Ignore Start Segment Address and Start Linear Address records.
+    // Process Extended Segment Address and Extended Linear Address records as they are encountered.
+    //
+    // What to do if the hex file doesn't end with a End of File record?
 }
 
 #[cfg(test)]
