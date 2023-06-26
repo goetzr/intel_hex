@@ -1,90 +1,47 @@
-use std::path::Path;
-use std::fmt;
-use std::fs;
-use std::io;
-
-pub struct HexFileParser {
-    contents: Vec<u8>,
+/// let content = std::fs::read("/path/to/intel_hex_file");
+/// for rec in records(&content) {
+///     // process rec
+/// }
+pub fn records(content: &[u8]) -> Records {
+    Records::new(content)
 }
 
-#[derive(Debug)]
-pub enum Error {
-    ReadFile(io::Error),
+pub struct Records<'a> {
+    content: &'a [u8],
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ERROR")
+impl<'a> Records<'a> {
+    fn new(content: &'a [u8]) -> Self {
+        // TODO: Ensure contents are ASCII. Return result.
+        Records { content }
+    }
+
+    fn skip_to_next_record(&mut self) {
+        self.content.
     }
 }
 
-impl std::error::Error for Error {}
+impl<'a> Iterator for Records<'a> {
+    type Item = Record;
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-impl HexFileParser {
-    pub fn new<P: AsRef<Path>>(hex_file_path: P) -> Result<Self> {
-        let contents = fs::read(hex_file_path).map_err(Error::ReadFile)?;
-        Ok(HexFileParser { contents })
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
     }
-
-    // How should parsing work?
-    // If we return an iterator, we could process each record as it's parsed.
-    // Nothing about the hex file says that the records need to write to consecutive memory addresses,
-    // so we'd be forced to seek around in the output file.
-    // To avoid this we could write to memory, but the iterator approach doesn't give us
-    // the full size of the binary file, so we can't allocate the memory upfront.
-    //
-    // Another approach would be to parse all the records at once, storing each parsed
-    // record in the parser.
-    // Only Data records would be stored. Other records would be processed inline.
-    // Think about End of File records.
-    // Ignore Start Segment/Linear Address records.
-    //
-    // Hex files do not need to contain contiguous data.
-    // Bytes not specified in the hex file should not be set.
-    // The data in hex files is not intended to be written to files.
-    // It's intended to be written to EEPROM.
-    //
-    // Line endings are not required. Start code marks the start of the next record.
-    //
-    // Ignore Start Segment Address and Start Linear Address records.
-    // Process Extended Segment Address and Extended Linear Address records as they are encountered.
-    //
-    // What to do if the hex file doesn't end with a End of File record?
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+const START_CODE_CHAR: u8 = b':';
 
-    const HEX_FILE: &'static str = "/home/rgoetz/projects/intel_hex/arduplane.hex";
+pub struct Record {
+    kind: RecordKind,   // Record type
+    addr: u16,          // Address
+    data: Vec<u8>,      // Byte count, Data
+}
 
-    #[test]
-    fn reads_hex_file() {
-        let parser = HexFileParser::new(HEX_FILE).expect("HexFileParser failed to read the hex file");
-        let contents = fs::read(HEX_FILE).expect("fs::read failed to read the hex file");
-        assert_eq!(parser.contents, contents);
-    }
-
-    #[test]
-    fn fails_to_read_missing_hex_file() {
-        assert!(matches!(HexFileParser::new("/path/to/missing"), Err(Error::ReadFile(_))));
-    }
-
-    // #[test]
-    // fn parsing_works() {
-    //     unimplemented!()
-    //     // const INPUT: &'static str = "/home/rgoetz/projects/intel_hex/arduplane.hex";
-    //     // let parser = HexFileParser::new(INPUT)?;
-    //     // for record in parser.records() {
-
-    //     // }
-    // }
-
-    // fn building_works() {
-    //     unimplemented!()
-    //     // const OUTPUT: &'static str = "/home/rgoetz/projects/intel_hex/arduplane.bin";
-    //     // let parser = HexFileParser::new(INPUT)?;
-    // }
+pub enum RecordKind {
+    Data,
+    EndOfFile,
+    ExtendedSegmentAddress,
+    StartSegmentAddress,
+    ExtendedLinearAddress,
+    StartLinearAddress,
 }
