@@ -3,9 +3,11 @@ use std::path::Path;
 use std::fs;
 use std::io;
 
+mod hex;
+
 /*
 let records = parse_hex_file("/path/to/hexfile")?;  // takes AsRef<Path>, returns Result<Vec<Record>>
-let results = process(&records);                    // takes &[Record], returns ProcessResults
+let results = process_records(&records);            // takes &[Record], returns ProcessResults
 let blocks = flash_blocks::<512>(&results.chunks);  // takes &[Chunk], returns Vec<FlashBlock>
 
 struct ProcessResults {
@@ -32,7 +34,7 @@ impl Chunk {
 }
 */
 
-pub fn parse<P>(path: P) -> Result<Vec<Record>>
+pub fn parse_hex_file<P>(path: P) -> Result<Vec<Record>>
 where P: AsRef<Path>
 {
     let content = fs::read(path).map_err(Error::ReadFile)?;
@@ -45,48 +47,75 @@ where P: AsRef<Path>
 
 struct HexFileParser<'a> { 
     cursor: &'a [u8],
+    record_idx: usize,
 }
 
 impl<'a> HexFileParser<'a> {
     fn new(content: &'a [u8]) -> Self {
-        HexFileParser { cursor: content }
+        HexFileParser { cursor: content, record_idx: 0 }
     }
 
-    fn parse(self) -> Result<Vec<Record>> {
-        unimplemented!();
+    fn parse(&mut self) -> Result<Vec<Record>> {
+        let mut records = Vec::new();
+
+        while let Some(record_pos) = self.find_next_record() {
+            self.advance_to_record(record_pos);
+
+            self.parse_byte_count()?;
+
+            self.record_idx += 1;
+        }
+            
+
+            /*
+            bytes_to_checksum: Vec<u8>,
+            byte_count: u8,
+            address: u16,
+            kind: RecordKind,
+            data: Vec<u8>,
+            checksum: u16,
+             */
+
+        Ok(records)
     }
-}
 
-pub struct Records<'a> {
-    content: &'a [u8],
-}
+    fn parse_byte_count(&mut self) -> Result<u8> {
+        const BYTE_COUNT_DIGITS: usize = 2;
 
-impl<'a> Records<'a> {
-    fn new(content: &'a [u8]) -> Self {
-        Records { content }
+        if self.cursor.len() == 0 {
+            return Err(self.missing_field(Field::ByteCount));
+        }
+        if self.cursor.len() < BYTE_COUNT_DIGITS {
+
+        }
+        hex::hex_string_to_bytes(hex_string)
     }
 
-    fn find_next_record(&mut self) -> Option<&[u8]> {
-        if let Some(pos) = self.content.iter().position(|&b| b == START_CODE_CHAR) {
-            Some(&self.content[(pos + 1)..])
+    fn check_space_for_field(field: Field) -> Result<()> {
+        // TODO store size of each field in hash
+    }
+
+    fn missing_field(&self, field: Field) -> Error {
+        missing_field(self.record_idx, field)
+    }
+
+    fn incomplete_field(&self, field: Field) -> Error {
+        incomplete_field(self.record_idx, field)
+    }
+
+    fn advance_to_record(&mut self, record_pos: usize) {
+        self.cursor = &self.cursor[record_pos..];
+    }
+
+    fn find_next_record(&self) -> Option<usize> {
+        const START_CODE_CHAR: u8 = b':';
+        if let Some(pos) = self.cursor.iter().position(|&b| b == START_CODE_CHAR) {
+            Some(pos + 1)
         } else {
             None
         }
     }
 }
-
-impl<'a> Iterator for Records<'a> {
-    type Item = Record;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.content = match self.find_next_record() {
-            Some(record_start) => record_start,
-            None => return None
-        };
-    }
-}
-
-const START_CODE_CHAR: u8 = b':';
 
 pub struct Record {
     kind: RecordKind,   // Record type
@@ -103,10 +132,53 @@ pub enum RecordKind {
     StartLinearAddress,
 }
 
+impl RecordKind {
+    fn from_int(kind: u8) -> Option<Self> {
+        use RecordKind::*;
+        match kind {
+            0 => Some(Data),
+            1 => Some(EndOfFile),
+            2 => Some(ExtendedSegmentAddress),
+            3 => Some(StartSegmentAddress),
+            4 => Some(ExtendedLinearAddress),
+            5 => Some(StartLinearAddress),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     ReadFile(io::Error),
     NotAscii,
+    ParseRecord {
+        record_idx: usize,
+        kind: ParseRecordError,
+    },
+    ParseField(hex::InvalidHexDigit),
+}
+
+fn missing_field(record_idx: usize, field: Field) -> Error {
+    Error::ParseRecord { record_idx, kind: ParseRecordError::MissingField(field) }
+}
+
+fn incomplete_field(record_idx: usize, field: Field) -> Error {
+    Error::ParseRecord { record_idx, kind: ParseRecordError::IncompleteField(field) }
+}
+
+#[derive(Debug)]
+enum ParseRecordError {
+    MissingField(Field),
+    IncompleteField(Field),
+}
+
+#[derive(Debug)]
+enum Field {
+    ByteCount,
+    Address,
+    Type,
+    Data,
+    Checksum,
 }
 
 impl fmt::Display for Error {
