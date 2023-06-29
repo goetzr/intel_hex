@@ -3,75 +3,57 @@ use std::path::Path;
 use std::fs;
 use std::io;
 
-pub struct HexFileParser<'a> {
-    content: Content<'a>,
+/*
+let records = parse_hex_file("/path/to/hexfile")?;  // takes AsRef<Path>, returns Result<Vec<Record>>
+let results = process(&records);                    // takes &[Record], returns ProcessResults
+let blocks = flash_blocks::<512>(&results.chunks);  // takes &[Chunk], returns Vec<FlashBlock>
+
+struct ProcessResults {
+    chunks: Vec<Chunk>,
+    segment_start: Option<SegmentStart>,
+    linear_start: Option<u32>,
+    ended_with_eof_record: bool,
+}
+
+pub struct SegmentStart {
+    pub cs: u16,
+    pub ip: u16,
+}
+
+pub struct Chunk {
+    pub addr: u32,
+    pub data: Vec<u8>,
+}
+
+impl Chunk {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+*/
+
+pub fn parse<P>(path: P) -> Result<Vec<Record>>
+where P: AsRef<Path>
+{
+    let content = fs::read(path).map_err(Error::ReadFile)?;
+    if !content.is_ascii() {
+        return Err(Error::NotAscii);
+    }
+
+    HexFileParser::new(&content).parse()
+}
+
+struct HexFileParser<'a> { 
     cursor: &'a [u8],
 }
 
-enum Content<'a> {
-    Borrowed(&'a [u8]),
-    Owned(Vec<u8>),
-}
-
-impl AsRef<[u8]> for Content<'_> {
-    fn as_ref(&self) -> &[u8] {
-        match &self {
-            Content::Borrowed(content) => content,
-            Content::Owned(content) => &content,
-        }
-    }
-}
-
 impl<'a> HexFileParser<'a> {
-    /// Creates an Intel Hex file parser from the file's contents.
-    /// 
-    /// # Errors
-    /// 
-    /// This function will return an error if an error is encountered reading the file.
-    /// 
-    /// It will also return an error if the content is not ASCII.
-    /// 
-    /// # Examples
-    /// 
-    /// ```
-    /// When exactly don't we have a file????????????????????????????????????????????????
-    /// fn parse_hex_file(content: &[u8]) {
-    ///     let parser = HexFileParser::from_content(content).expect("")
-    /// }
-    /// ```
-    pub fn from_content<T: AsRef<[u8]>>(content: T) -> Result<Self> {
-        let content = content.as_ref();
-        if content.is_ascii() {
-            Ok(HexFileParser { content: Content::Borrowed(content), cursor: content })
-        } else {
-            Err(Error::NotAscii)
-        }
+    fn new(content: &'a [u8]) -> Self {
+        HexFileParser { cursor: content }
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read(path).map_err(Error::ReadFile)?;
-        if content.is_ascii() {
-            Ok(HexFileParser { content: Content::Owned(content), cursor: &content })
-        } else {
-            Err(Error::NotAscii)
-        }
-    }
-
-    /// Returns an iterator over the records in the Intel Hex file.
-    /// 
-    /// # Examples
-    /// 
-    /// Basic usage:
-    /// 
-    /// ```
-    /// let content = std::fs::read("/path/to/intel_hex_file");
-    /// let parser = HexFileParser::new(&content)?;
-    /// for rec in parser.records() {
-    ///     println!("#?", rec);
-    /// }
-    /// ```
-    pub fn records(&self) -> Records {
-        Records::new(self.content)
+    fn parse(self) -> Result<Vec<Record>> {
+        unimplemented!();
     }
 }
 
