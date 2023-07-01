@@ -2,39 +2,48 @@ use std::fmt;
 
 const DIGITS_PER_BYTE: usize = 2;
 
-pub fn hex_string_to_bytes(hex_string: &[u8]) -> Result<Vec<u8>> {
+pub fn hex_string_to_bytes(hex_string: &[u8]) -> Result {
     assert!(hex_string.len() % DIGITS_PER_BYTE == 0, "hex string must consist of pairs of hex digits");
     let mut bytes = Vec::new();
-    for hex_digit_pair in  hex_string.chunks(DIGITS_PER_BYTE) {
-        let high_byte = decode_hex_digit(hex_digit_pair[0])?;
-        let low_byte = decode_hex_digit(hex_digit_pair[1])?;
-        bytes.push(high_byte << 8 | low_byte);
+    for (index, hex_digit_pair) in  hex_string.chunks(DIGITS_PER_BYTE).enumerate() {
+        let (digit1, digit2) = (hex_digit_pair[0], hex_digit_pair[1]);
+        let high_nibble = decode_hex_digit(digit1).map_err(|_| InvalidHexString::new(index, digit1))?;
+        let low_nibble = decode_hex_digit(digit2).map_err(|_| InvalidHexString::new(index + 1, digit2))?;
+        bytes.push(high_nibble << 4 | low_nibble);
     }
     Ok(bytes)
 }
 
-fn decode_hex_digit(digit: u8) -> Result<u8> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct InvalidHexString {
+    index: usize,
+    digit: u8,
+}
+
+impl InvalidHexString {
+    fn new(index: usize, digit: u8) -> Self {
+        InvalidHexString { index, digit }
+    }
+}
+
+impl fmt::Display for InvalidHexString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid hex string: invalid hex digit '{}' at index {}", self.digit as char, self.index)
+    }
+}
+
+impl std::error::Error for InvalidHexString {}
+
+type Result = std::result::Result<Vec<u8>, InvalidHexString>;
+
+fn decode_hex_digit(digit: u8) -> std::result::Result<u8, ()> {
     match digit {
         b'0'..=b'9' => Ok(digit - b'0'),
         b'a'..=b'f' => Ok(digit - b'a'),
         b'A'..=b'F' => Ok(digit - b'A'),
-        d => Err(InvalidHexDigit(d)),
+        _ => Err(()),
     }
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct InvalidHexDigit(u8);
-
-impl fmt::Display for InvalidHexDigit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid hex digit '{}'", self.0 as char)
-    }
-}
-
-impl std::error::Error for InvalidHexDigit {}
-
-type Result<T> = std::result::Result<T, InvalidHexDigit>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,7 +76,7 @@ mod tests {
 
     #[test]
     fn fails_to_decode_invalid_hex_digit() {
-        assert_eq!(decode_hex_digit(b'g'), Err(InvalidHexDigit(b'g')));
+        assert!(decode_hex_digit(b'g').is_err());
     }
 
     #[test]

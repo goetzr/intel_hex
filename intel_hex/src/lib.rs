@@ -80,27 +80,39 @@ impl<'a> HexFileParser<'a> {
     }
 
     fn parse_byte_count(&mut self) -> Result<u8> {
-        const BYTE_COUNT_DIGITS: usize = 2;
+        let field = Field::ByteCount;
+        self.check_space_for_field(field)?;
+        self.parse_field_hex_string(field)?;
+    }
 
+    fn check_space_for_field(&self, field: Field) -> Result<()> {
         if self.cursor.len() == 0 {
-            return Err(self.missing_field(Field::ByteCount));
+            Err(self.missing_field_error(field))
         }
-        if self.cursor.len() < BYTE_COUNT_DIGITS {
-
+        else if self.cursor.len() < size_of_field(field) {
+            Err(self.incomplete_field_error(field))
+        } else {
+            Ok(())
         }
-        hex::hex_string_to_bytes(hex_string)
     }
 
-    fn check_space_for_field(field: Field) -> Result<()> {
-        // TODO store size of each field in hash
+    fn missing_field_error(&self, field: Field) -> Error {
+        missing_field_error(self.record_idx, field)
     }
 
-    fn missing_field(&self, field: Field) -> Error {
-        missing_field(self.record_idx, field)
+    fn incomplete_field_error(&self, field: Field) -> Error {
+        incomplete_field_error(self.record_idx, field)
     }
 
-    fn incomplete_field(&self, field: Field) -> Error {
-        incomplete_field(self.record_idx, field)
+    fn parse_field_error(&self, field: Field, error: hex::InvalidHexString) -> Error {
+        parse_field_error(self.record_idx, field, error)
+    }
+
+    fn parse_field_hex_string(&mut self, field: Field) -> Result<Vec<u8>> {
+        let field_size = size_of_field(field);
+        let hex_string = &self.cursor[..field_size];
+        self.cursor = &self.cursor[field_size..];
+        hex::hex_string_to_bytes(hex_string).map_err(|e| parse_field_error(self.record_idx, field, e))
     }
 
     fn advance_to_record(&mut self, record_pos: usize) {
@@ -155,21 +167,28 @@ pub enum Error {
         record_idx: usize,
         kind: ParseRecordError,
     },
-    ParseField(hex::InvalidHexDigit),
 }
 
-fn missing_field(record_idx: usize, field: Field) -> Error {
+fn missing_field_error(record_idx: usize, field: Field) -> Error {
     Error::ParseRecord { record_idx, kind: ParseRecordError::MissingField(field) }
 }
 
-fn incomplete_field(record_idx: usize, field: Field) -> Error {
+fn incomplete_field_error(record_idx: usize, field: Field) -> Error {
     Error::ParseRecord { record_idx, kind: ParseRecordError::IncompleteField(field) }
+}
+
+fn parse_field_error(record_idx: usize, field: Field, error: hex::InvalidHexString) -> Error {
+    Error::ParseRecord { record_idx, kind: ParseRecordError::ParseField { field, error } }
 }
 
 #[derive(Debug)]
 enum ParseRecordError {
     MissingField(Field),
     IncompleteField(Field),
+    ParseField {
+        field: Field,
+        error: hex::InvalidHexString,
+    }
 }
 
 #[derive(Debug)]
@@ -181,9 +200,44 @@ enum Field {
     Checksum,
 }
 
+impl fmt::Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            ByteCount => write!(f, "ByteCount"),
+            Address => write!(f, "Address"),
+            Type => write!(f, "Type"),
+            Data => write!(f, "Data"),
+            Checksum => write!(f, "Checksum"),
+        }
+    }
+}
+
+fn size_of_field(field: Field) -> usize {
+    match field {
+        ByteCount => 2,
+        Address => 4,
+        Type => 2,
+        Data => panic!("Data is not a constant-sized field"),
+        Checksum => 2,
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "error")
+        use Error::*;
+        match &self {
+            ReadFile(io_error) => write!(f, "error reading the file: {io_error}"),
+            NotAscii => write!(f, "not all characters are ASCII"),
+            ParseRecord { record_idx, kind } => {
+                write!(f, "failed to parse record at index {}: ", record_idx)?;
+                use ParseRecordError::*;
+                match kind {
+                    MissingField(field) => write!(f, "{} field missing", field),
+                    IncompleteField(field) => write!(f, "{} field incomplete", field),
+                    ParseField { field, error } => write!(f, "failed to parse {} field: {}", field, error),
+                }
+            }
+        }
     }
 }
 
