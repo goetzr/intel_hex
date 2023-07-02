@@ -62,10 +62,11 @@ impl<'a> HexFileParser<'a> {
 
         while let Some(next_record_pos) = self.find_next_record() {
             self.advance_to_record(next_record_pos);
+            let mut to_checksum = Vec::new();
 
-            let byte_count = self.parse_byte_count()?;
-            let addr = self.parse_address()?;
-            let kind_val = self.parse_type()?;
+            let byte_count = self.parse_byte_count(&mut to_checksum)?;
+            let addr = self.parse_address(&mut to_checksum)?;
+            let kind_val = self.parse_type(&mut to_checksum)?;
             let kind = RecordKind::from_int(kind_val).ok_or(invalid_type_error(self.record_idx, kind_val))?;
             let mut data = None;
             if byte_count > 0 {
@@ -83,24 +84,30 @@ impl<'a> HexFileParser<'a> {
         Ok(records)
     }
 
-    fn parse_byte_count(&mut self) -> Result<u8> {
+    fn parse_byte_count(&mut self, to_checksum: &mut Vec<u8>) -> Result<u8> {
         let field_size = size_of_field(Field::ByteCount);
         self.check_space_for_field(Field::ByteCount, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::ByteCount, field_size)?;
+        to_checksum.push(field_bytes);
         Ok(field_bytes.as_slice().get_u8())
     }
 
-    fn parse_address(&mut self) -> Result<u16> {
+    fn parse_address(&mut self, to_checksum: &mut Vec<u8>) -> Result<u16> {
         let field_size = size_of_field(Field::Address);
         self.check_space_for_field(Field::Address, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::Address, field_size)?;
+        to_checksum.push(field_bytes);
         Ok(field_bytes.as_slice().get_u16())
     }
 
-    fn parse_type(&mut self) -> Result<u8> {
+    fn parse_type(&mut self, to_checksum: &mut Vec<u8>) -> Result<u8> {
         let field_size = size_of_field(Field::Type);
         self.check_space_for_field(Field::Type, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::Type, field_size)?;
+        // *************************************************************************************************
+        // TODO best way to append?
+        // *************************************************************************************************
+        to_checksum.extend(field_bytes);
         Ok(field_bytes.as_slice().get_u8())
     }
 
@@ -150,6 +157,10 @@ impl<'a> HexFileParser<'a> {
             None
         }
     }
+}
+
+fn validate_checksum(to_checksum: &[u8], checksum: u8) {
+
 }
 
 pub struct Record {
