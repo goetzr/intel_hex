@@ -1,6 +1,6 @@
 use std::fmt;
 
-const DIGITS_PER_BYTE: usize = 2;
+pub const DIGITS_PER_BYTE: usize = 2;
 
 pub fn hex_string_to_bytes(hex_string: &[u8]) -> Result {
     assert!(hex_string.len() % DIGITS_PER_BYTE == 0, "hex string must consist of pairs of hex digits");
