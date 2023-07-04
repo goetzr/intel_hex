@@ -68,6 +68,7 @@ impl<'a> HexFileParser<'a> {
             let addr = self.parse_address(&mut to_checksum)?;
             let kind_val = self.parse_type(&mut to_checksum)?;
             let kind = RecordKind::from_int(kind_val).ok_or(invalid_type_error(self.record_idx, kind_val))?;
+
             let mut data = None;
             if byte_count > 0 {
                 data = Some(self.parse_data(byte_count, &mut to_checksum)?);
@@ -167,6 +168,61 @@ fn is_checksum_valid(to_checksum: &[u8], checksum: u8) -> bool {
     (calculated & 0xff) as u8 == checksum
 }
 
+pub fn process_records(records: Vec<Record>) -> ProcessRecordResults {
+    let mut chunks = Vec::with_capacity(records.len());
+    let mut base_addr: u32 = 0;
+    let mut segment_start: Option<SegmentStart> = None;
+    let mut linear_start: Option<u32> = None;
+    let mut ended_with_eof_record = false;
+
+    for record in records {
+        /*match record.kind {
+            RecordKind::Data => {
+                
+            }
+            RecordKind::EndOfFile => ,
+            RecordKind::ExtendedSegmentAddress => ,
+            RecordKind::StartSegmentAddress => ,
+            RecordKind::ExtendedLinearAddress => ,
+            RecordKind::StartLinearAddress => ,
+        }*/
+    }
+
+    ProcessRecordResults {
+        chunks,
+        segment_start,
+        linear_start,
+        ended_with_eof_record,
+    }
+}
+
+pub struct ProcessRecordResults {
+    chunks: Vec<Chunk>,
+    segment_start: Option<SegmentStart>,
+    linear_start: Option<u32>,
+    ended_with_eof_record: bool,
+}
+
+pub struct Chunk {
+    pub addr: u32,
+    data: Vec<u8>,
+}
+
+impl Chunk {
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+pub struct SegmentStart {
+    pub cs: u16,
+    pub ip: u16,
+}
+
 pub struct Record {
     addr: u16,
     kind: RecordKind,
@@ -180,6 +236,39 @@ pub enum RecordKind {
     StartSegmentAddress,
     ExtendedLinearAddress,
     StartLinearAddress,
+}
+
+#[derive(Debug)]
+pub enum FixedByteCountRecord {
+    EndOfFile,
+    ExtendedSegmentAddress,
+    StartSegmentAddress,
+    ExtendedLinearAddress,
+    StartLinearAddress,
+}
+
+impl fmt::Display for FixedByteCountRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use FixedByteCountRecord::*;
+        match self {
+            EndOfFile => write!(f, "EndOfFile"),
+            ExtendedSegmentAddress => write!(f, "ExtendedSegmentAddress"),
+            StartSegmentAddress => write!(f, "StartSegmentAddress"),
+            ExtendedLinearAddress => write!(f, "ExtendedLinearAddress"),
+            StartLinearAddress => write!(f, "StartLinearAddress"),
+        }
+    }
+}
+
+fn record_byte_count(record: FixedByteCountRecord) -> u8 {
+    use FixedByteCountRecord::*;
+    match record {
+        EndOfFile => 0,
+        ExtendedSegmentAddress => 2,
+        StartSegmentAddress => 4,
+        ExtendedLinearAddress => 2,
+        StartLinearAddress => 4,
+    }
 }
 
 impl RecordKind {
@@ -227,6 +316,8 @@ fn checksum_mismatch_error(record_idx: usize) -> Error {
     Error::ParseRecord { record_idx, kind: ParseRecordError::ChecksumMismatch }
 }
 
+fn invalid_byte_count(record_idx: usize, )
+
 #[derive(Debug)]
 pub enum ParseRecordError {
     ParseField {
@@ -235,6 +326,10 @@ pub enum ParseRecordError {
     },
     InvalidType(u8),
     ChecksumMismatch,
+    InvalidByteCount {
+        record_type: FixedByteCountRecord,
+        expected_byte_count: u8,
+    },
 }
 
 #[derive(Debug)]
@@ -304,6 +399,9 @@ impl fmt::Display for Error {
                     },
                     InvalidType(kind) => write!(f, "invalid type: {kind}"),
                     ChecksumMismatch => write!(f, "checksum mismatch"),
+                    InvalidByteCount { record_type, expected_byte_count} => {
+                        write!(f, "byte count must be {expected_byte_count} for {record_type} records")
+                    }
                 }
             }
         }
