@@ -70,12 +70,14 @@ impl<'a> HexFileParser<'a> {
             let kind = RecordKind::from_int(kind_val).ok_or(invalid_type_error(self.record_idx, kind_val))?;
             let mut data = None;
             if byte_count > 0 {
-                data = Some(self.parse_data(byte_count)?);
+                data = Some(self.parse_data(byte_count, &mut to_checksum)?);
             }
             let checksum = self.parse_checksum()?;
-            // TODO validate checksum
+            if !is_checksum_valid(&to_checksum, checksum) {
+                return Err(checksum_mismatch_error(self.record_idx));
+            }
 
-            let record = Record { addr, kind, data, checksum };
+            let record = Record { addr, kind, data };
             records.push(record);
 
             self.record_idx += 1;
@@ -85,46 +87,46 @@ impl<'a> HexFileParser<'a> {
     }
 
     fn parse_byte_count(&mut self, to_checksum: &mut Vec<u8>) -> Result<u8> {
-        let field_size = size_of_field(Field::ByteCount);
+        let field_size = size_of_field(ConstantSizeField::ByteCount);
         self.check_space_for_field(Field::ByteCount, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::ByteCount, field_size)?;
-        to_checksum.push(field_bytes);
+        to_checksum.extend_from_slice(&field_bytes);
         Ok(field_bytes.as_slice().get_u8())
     }
 
     fn parse_address(&mut self, to_checksum: &mut Vec<u8>) -> Result<u16> {
-        let field_size = size_of_field(Field::Address);
+        let field_size = size_of_field(ConstantSizeField::Address);
         self.check_space_for_field(Field::Address, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::Address, field_size)?;
-        to_checksum.push(field_bytes);
+        to_checksum.extend_from_slice(&field_bytes);
         Ok(field_bytes.as_slice().get_u16())
     }
 
     fn parse_type(&mut self, to_checksum: &mut Vec<u8>) -> Result<u8> {
-        let field_size = size_of_field(Field::Type);
+        let field_size = size_of_field(ConstantSizeField::Type);
         self.check_space_for_field(Field::Type, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::Type, field_size)?;
-        // *************************************************************************************************
-        // TODO best way to append?
-        // *************************************************************************************************
-        to_checksum.extend(field_bytes);
+        to_checksum.extend_from_slice(&field_bytes);
         Ok(field_bytes.as_slice().get_u8())
     }
 
-    fn parse_data(&mut self, byte_count: u8) -> Result<Vec<u8>> {
-        self.check_space_for_field(Field::Data, byte_count as usize)?;
-        self.parse_field_hex_string(Field::Data, byte_count as usize)
+    fn parse_data(&mut self, byte_count: u8, to_checksum: &mut Vec<u8>) -> Result<Vec<u8>> {
+        let field_size = byte_count as usize * 2;
+        self.check_space_for_field(Field::Data, field_size)?;
+        let field_bytes = self.parse_field_hex_string(Field::Data, field_size)?;
+        to_checksum.extend_from_slice(&field_bytes);
+        Ok(field_bytes)
     }
 
     fn parse_checksum(&mut self) -> Result<u8> {
-        let field_size = size_of_field(Field::Checksum);
+        let field_size = size_of_field(ConstantSizeField::Checksum);
         self.check_space_for_field(Field::Checksum, field_size)?;
         let field_bytes = self.parse_field_hex_string(Field::Checksum, field_size)?;
         Ok(field_bytes.as_slice().get_u8())
     }
 
     fn check_space_for_field(&self, field: Field, field_size: usize) -> Result<()> {
-        if self.cursor.len() == 0 {
+        if self.cursor.is_empty() {
             Err(missing_field_error(self.record_idx, field))
         }
         else if self.cursor.len() < field_size {
@@ -151,23 +153,24 @@ impl<'a> HexFileParser<'a> {
 
     fn find_next_record(&self) -> Option<usize> {
         const START_CODE_CHAR: u8 = b':';
-        if let Some(pos) = self.cursor.iter().position(|&b| b == START_CODE_CHAR) {
-            Some(pos + 1)
-        } else {
-            None
-        }
+        self.cursor.iter().position(|&b| b == START_CODE_CHAR).map(|pos| pos + 1)
     }
 }
 
-fn validate_checksum(to_checksum: &[u8], checksum: u8) {
-
+fn is_checksum_valid(to_checksum: &[u8], checksum: u8) -> bool {
+    let mut calculated: u16 = 0;
+    for &value in to_checksum {
+        calculated = (calculated + value as u16) & 0xff;
+    }
+    // Two's complement: flip each bit then add 1.
+    calculated = (calculated ^ 0xff) + 1;
+    (calculated & 0xff) as u8 == checksum
 }
 
 pub struct Record {
     addr: u16,
     kind: RecordKind,
     data: Option<Vec<u8>>,
-    checksum: u8,
 }
 
 pub enum RecordKind {
@@ -220,6 +223,10 @@ fn invalid_type_error(record_idx: usize, kind: u8) -> Error {
     Error::ParseRecord { record_idx, kind: ParseRecordError::InvalidType(kind) }
 }
 
+fn checksum_mismatch_error(record_idx: usize) -> Error {
+    Error::ParseRecord { record_idx, kind: ParseRecordError::ChecksumMismatch }
+}
+
 #[derive(Debug)]
 pub enum ParseRecordError {
     ParseField {
@@ -246,6 +253,13 @@ pub enum Field {
     Checksum,
 }
 
+enum ConstantSizeField {
+    ByteCount,
+    Address,
+    Type,
+    Checksum,
+}
+
 impl fmt::Display for Field {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Field::*;
@@ -259,13 +273,12 @@ impl fmt::Display for Field {
     }
 }
 
-fn size_of_field(field: Field) -> usize {
-    use Field::*;
+fn size_of_field(field: ConstantSizeField) -> usize {
+    use ConstantSizeField::*;
     match field {
         ByteCount => 2,
         Address => 4,
         Type => 2,
-        Data => panic!("Data is not a constant-sized field"),
         Checksum => 2,
     }
 }
@@ -300,3 +313,23 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    fn test_file_path(name: &str) -> PathBuf {
+        let mut path: PathBuf = ["..", "test"].iter().collect();
+        path.push(name);
+        path
+    }
+
+    #[test]
+    fn single_valid_data_record() {
+        let path = test_file_path("single_valid_data_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert!(records.len() == 1);
+    }
+}

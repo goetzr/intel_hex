@@ -1,11 +1,9 @@
 use std::fmt;
 
-pub const DIGITS_PER_BYTE: usize = 2;
-
 pub fn hex_string_to_bytes(hex_string: &[u8]) -> Result {
-    assert!(hex_string.len() % DIGITS_PER_BYTE == 0, "hex string must consist of pairs of hex digits");
+    assert!(hex_string.len() % 2 == 0, "hex string must consist of pairs of hex digits");
     let mut bytes = Vec::new();
-    for (index, hex_digit_pair) in  hex_string.chunks(DIGITS_PER_BYTE).enumerate() {
+    for (index, hex_digit_pair) in  hex_string.chunks(2).enumerate() {
         let (digit1, digit2) = (hex_digit_pair[0], hex_digit_pair[1]);
         let high_nibble = decode_hex_digit(digit1).map_err(|_| InvalidHexString::new(index, digit1))?;
         let low_nibble = decode_hex_digit(digit2).map_err(|_| InvalidHexString::new(index + 1, digit2))?;
@@ -39,8 +37,8 @@ type Result = std::result::Result<Vec<u8>, InvalidHexString>;
 fn decode_hex_digit(digit: u8) -> std::result::Result<u8, ()> {
     match digit {
         b'0'..=b'9' => Ok(digit - b'0'),
-        b'a'..=b'f' => Ok(digit - b'a'),
-        b'A'..=b'F' => Ok(digit - b'A'),
+        b'a'..=b'f' => Ok(10 + digit - b'a'),
+        b'A'..=b'F' => Ok(10 + digit - b'A'),
         _ => Err(()),
     }
 }
