@@ -69,10 +69,18 @@ impl<'a> HexFileParser<'a> {
             let kind_val = self.parse_type(&mut to_checksum)?;
             let kind = RecordKind::from_int(kind_val).ok_or(invalid_type_error(self.record_idx, kind_val))?;
 
+            if let Some(fixed_byte_count_kind) = FixedByteCountRecord::try_from(kind).ok() {
+                let expected_byte_count = record_byte_count(fixed_byte_count_kind);
+                if byte_count != expected_byte_count {
+                    return Err(invalid_byte_count(self.record_idx, fixed_byte_count_kind, expected_byte_count))
+                }
+            }
+
             let mut data = None;
             if byte_count > 0 {
                 data = Some(self.parse_data(byte_count, &mut to_checksum)?);
             }
+
             let checksum = self.parse_checksum()?;
             if !is_checksum_valid(&to_checksum, checksum) {
                 return Err(checksum_mismatch_error(self.record_idx));
@@ -229,6 +237,7 @@ pub struct Record {
     data: Option<Vec<u8>>,
 }
 
+#[derive(Copy, Clone)]
 pub enum RecordKind {
     Data,
     EndOfFile,
@@ -238,7 +247,7 @@ pub enum RecordKind {
     StartLinearAddress,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum FixedByteCountRecord {
     EndOfFile,
     ExtendedSegmentAddress,
@@ -256,6 +265,21 @@ impl fmt::Display for FixedByteCountRecord {
             StartSegmentAddress => write!(f, "StartSegmentAddress"),
             ExtendedLinearAddress => write!(f, "ExtendedLinearAddress"),
             StartLinearAddress => write!(f, "StartLinearAddress"),
+        }
+    }
+}
+
+impl TryFrom<RecordKind> for FixedByteCountRecord {
+    type Error = ();
+
+    fn try_from(kind: RecordKind) -> std::result::Result<Self, Self::Error> {
+        match kind {
+            RecordKind::Data => Err(()),
+            RecordKind::EndOfFile => Ok(FixedByteCountRecord::EndOfFile),
+            RecordKind::ExtendedSegmentAddress => Ok(FixedByteCountRecord::ExtendedSegmentAddress),
+            RecordKind::StartSegmentAddress => Ok(FixedByteCountRecord::StartSegmentAddress),
+            RecordKind::ExtendedLinearAddress => Ok(FixedByteCountRecord::ExtendedLinearAddress),
+            RecordKind::StartLinearAddress => Ok(FixedByteCountRecord::StartLinearAddress),
         }
     }
 }
@@ -316,7 +340,9 @@ fn checksum_mismatch_error(record_idx: usize) -> Error {
     Error::ParseRecord { record_idx, kind: ParseRecordError::ChecksumMismatch }
 }
 
-fn invalid_byte_count(record_idx: usize, )
+fn invalid_byte_count(record_idx: usize, record_type: FixedByteCountRecord, expected_byte_count: u8) -> Error {
+    Error::ParseRecord { record_idx, kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count } }
+}
 
 #[derive(Debug)]
 pub enum ParseRecordError {
@@ -429,5 +455,22 @@ mod test {
         let path = test_file_path("single_valid_data_record.hex");
         let records = parse_hex_file(path).expect("parse failed");
         assert!(records.len() == 1);
+    }
+
+    #[test]
+    fn invalid_byte_count() {
+        let path = test_file_path("invalid_byte_count.hex");
+        let records = parse_hex_file(path);
+        let record_type2 = FixedByteCountRecord::ExtendedLinearAddress;
+        let expected_byte_count = record_byte_count(record_type2);
+        assert!(matches!(records,
+            Err(Error::ParseRecord {
+                record_idx: _,
+                kind: ParseRecordError::InvalidByteCount {
+                    record_type: record_type2,
+                    expected_byte_count: expected_byte_count
+                }
+            }
+        )));
     }
 }
