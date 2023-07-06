@@ -247,7 +247,7 @@ pub enum RecordKind {
     StartLinearAddress,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum FixedByteCountRecord {
     EndOfFile,
     ExtendedSegmentAddress,
@@ -461,16 +461,15 @@ mod test {
     fn invalid_byte_count() {
         let path = test_file_path("invalid_byte_count.hex");
         let records = parse_hex_file(path);
-        let record_type2 = FixedByteCountRecord::ExtendedLinearAddress;
-        let expected_byte_count = record_byte_count(record_type2);
-        assert!(matches!(records,
-            Err(Error::ParseRecord {
-                record_idx: _,
-                kind: ParseRecordError::InvalidByteCount {
-                    record_type: record_type2,
-                    expected_byte_count: expected_byte_count
-                }
-            }
-        )));
+        let actual_byte_count = record_byte_count(FixedByteCountRecord::ExtendedLinearAddress);
+        assert!(
+            match records {
+                Err(Error::ParseRecord {
+                    kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                    ..
+                }) if record_type == FixedByteCountRecord::ExtendedLinearAddress && expected_byte_count == actual_byte_count => true,
+                _ => false,
+            },
+        );
     }
 }
