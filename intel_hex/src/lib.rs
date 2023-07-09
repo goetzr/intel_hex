@@ -1,7 +1,7 @@
 use std::fmt;
-use std::path::Path;
 use std::fs;
 use std::io;
+use std::path::Path;
 
 use bytes::Buf;
 
@@ -37,7 +37,8 @@ impl Chunk {
 */
 
 pub fn parse_hex_file<P>(path: P) -> Result<Vec<Record>>
-where P: AsRef<Path>
+where
+    P: AsRef<Path>,
 {
     let content = fs::read(path).map_err(Error::ReadFile)?;
     if !content.is_ascii() {
@@ -47,14 +48,17 @@ where P: AsRef<Path>
     HexFileParser::new(&content).parse()
 }
 
-struct HexFileParser<'a> { 
+struct HexFileParser<'a> {
     cursor: &'a [u8],
     record_idx: usize,
 }
 
 impl<'a> HexFileParser<'a> {
     fn new(content: &'a [u8]) -> Self {
-        HexFileParser { cursor: content, record_idx: 0 }
+        HexFileParser {
+            cursor: content,
+            record_idx: 0,
+        }
     }
 
     fn parse(&mut self) -> Result<Vec<Record>> {
@@ -67,12 +71,17 @@ impl<'a> HexFileParser<'a> {
             let byte_count = self.parse_byte_count(&mut to_checksum)?;
             let addr = self.parse_address(&mut to_checksum)?;
             let kind_val = self.parse_type(&mut to_checksum)?;
-            let kind = RecordKind::from_int(kind_val).ok_or(invalid_type_error(self.record_idx, kind_val))?;
+            let kind = RecordKind::from_int(kind_val)
+                .ok_or(invalid_type_error(self.record_idx, kind_val))?;
 
             if let Some(fixed_byte_count_kind) = FixedByteCountRecord::try_from(kind).ok() {
                 let expected_byte_count = record_byte_count(fixed_byte_count_kind);
                 if byte_count != expected_byte_count {
-                    return Err(invalid_byte_count(self.record_idx, fixed_byte_count_kind, expected_byte_count))
+                    return Err(invalid_byte_count(
+                        self.record_idx,
+                        fixed_byte_count_kind,
+                        expected_byte_count,
+                    ));
                 }
             }
 
@@ -137,8 +146,7 @@ impl<'a> HexFileParser<'a> {
     fn check_space_for_field(&self, field: Field, field_size: usize) -> Result<()> {
         if self.cursor.is_empty() {
             Err(missing_field_error(self.record_idx, field))
-        }
-        else if self.cursor.len() < field_size {
+        } else if self.cursor.len() < field_size {
             Err(incomplete_field_error(self.record_idx, field))
         } else {
             Ok(())
@@ -147,7 +155,8 @@ impl<'a> HexFileParser<'a> {
 
     fn parse_field_hex_string(&mut self, field: Field, field_size: usize) -> Result<Vec<u8>> {
         let hex_string = self.get_field_hex_string(field_size);
-        hex::hex_string_to_bytes(hex_string).map_err(|e| invalid_hex_error(self.record_idx, field, e))
+        hex::hex_string_to_bytes(hex_string)
+            .map_err(|e| invalid_hex_error(self.record_idx, field, e))
     }
 
     fn get_field_hex_string(&mut self, field_size: usize) -> &[u8] {
@@ -162,7 +171,10 @@ impl<'a> HexFileParser<'a> {
 
     fn find_next_record(&self) -> Option<usize> {
         const START_CODE_CHAR: u8 = b':';
-        self.cursor.iter().position(|&b| b == START_CODE_CHAR).map(|pos| pos + 1)
+        self.cursor
+            .iter()
+            .position(|&b| b == START_CODE_CHAR)
+            .map(|pos| pos + 1)
     }
 }
 
@@ -186,7 +198,7 @@ pub fn process_records(records: Vec<Record>) -> ProcessRecordResults {
     for record in records {
         /*match record.kind {
             RecordKind::Data => {
-                
+
             }
             RecordKind::EndOfFile => ,
             RecordKind::ExtendedSegmentAddress => ,
@@ -237,7 +249,7 @@ pub struct Record {
     data: Option<Vec<u8>>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RecordKind {
     Data,
     EndOfFile,
@@ -245,6 +257,21 @@ pub enum RecordKind {
     StartSegmentAddress,
     ExtendedLinearAddress,
     StartLinearAddress,
+}
+
+impl RecordKind {
+    fn from_int(kind: u8) -> Option<Self> {
+        use RecordKind::*;
+        match kind {
+            0 => Some(Data),
+            1 => Some(EndOfFile),
+            2 => Some(ExtendedSegmentAddress),
+            3 => Some(StartSegmentAddress),
+            4 => Some(ExtendedLinearAddress),
+            5 => Some(StartLinearAddress),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -295,21 +322,6 @@ fn record_byte_count(record: FixedByteCountRecord) -> u8 {
     }
 }
 
-impl RecordKind {
-    fn from_int(kind: u8) -> Option<Self> {
-        use RecordKind::*;
-        match kind {
-            0 => Some(Data),
-            1 => Some(EndOfFile),
-            2 => Some(ExtendedSegmentAddress),
-            3 => Some(StartSegmentAddress),
-            4 => Some(ExtendedLinearAddress),
-            5 => Some(StartLinearAddress),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum Error {
     ReadFile(io::Error),
@@ -321,34 +333,68 @@ pub enum Error {
 }
 
 fn missing_field_error(record_idx: usize, field: Field) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::ParseField { field, kind: ParseFieldError::Missing } }
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::ParseField {
+            field,
+            kind: ParseFieldError::Missing,
+        },
+    }
 }
 
 fn incomplete_field_error(record_idx: usize, field: Field) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::ParseField { field, kind: ParseFieldError::Incomplete } }
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::ParseField {
+            field,
+            kind: ParseFieldError::Incomplete,
+        },
+    }
 }
 
 fn invalid_hex_error(record_idx: usize, field: Field, error: hex::InvalidHexString) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::ParseField { field, kind: ParseFieldError::InvalidHex(error) } }
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::ParseField {
+            field,
+            kind: ParseFieldError::InvalidHex(error),
+        },
+    }
 }
 
 fn invalid_type_error(record_idx: usize, kind: u8) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::InvalidType(kind) }
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::InvalidType(kind),
+    }
 }
 
 fn checksum_mismatch_error(record_idx: usize) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::ChecksumMismatch }
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::ChecksumMismatch,
+    }
 }
 
-fn invalid_byte_count(record_idx: usize, record_type: FixedByteCountRecord, expected_byte_count: u8) -> Error {
-    Error::ParseRecord { record_idx, kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count } }
+fn invalid_byte_count(
+    record_idx: usize,
+    record_type: FixedByteCountRecord,
+    expected_byte_count: u8,
+) -> Error {
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::InvalidByteCount {
+            record_type,
+            expected_byte_count,
+        },
+    }
 }
 
 #[derive(Debug)]
 pub enum ParseRecordError {
     ParseField {
         field: Field,
-        kind: ParseFieldError
+        kind: ParseFieldError,
     },
     InvalidType(u8),
     ChecksumMismatch,
@@ -422,11 +468,17 @@ impl fmt::Display for Error {
                             Incomplete => write!(f, "field incomplete"),
                             InvalidHex(error) => write!(f, "{error}"),
                         }
-                    },
+                    }
                     InvalidType(kind) => write!(f, "invalid type: {kind}"),
                     ChecksumMismatch => write!(f, "checksum mismatch"),
-                    InvalidByteCount { record_type, expected_byte_count} => {
-                        write!(f, "byte count must be {expected_byte_count} for {record_type} records")
+                    InvalidByteCount {
+                        record_type,
+                        expected_byte_count,
+                    } => {
+                        write!(
+                            f,
+                            "byte count must be {expected_byte_count} for {record_type} records"
+                        )
                     }
                 }
             }
@@ -454,22 +506,40 @@ mod test {
     fn single_valid_data_record() {
         let path = test_file_path("single_valid_data_record.hex");
         let records = parse_hex_file(path).expect("parse failed");
-        assert!(records.len() == 1);
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.addr, 0x8000);
+        assert_eq!(record.kind, RecordKind::Data);
+        assert!(record.data.is_some());
+        let data = record.data.as_ref().unwrap();
+        assert_eq!(data, &vec![0x00, 0x06, 0x02, 0x20, 0xED, 0x8C, 0x00, 0x08, 0x75, 0x79, 0x0E, 0x08, 0x81, 0x82, 0x00, 0x08]);
+    }
+
+    #[test]
+    fn not_terminated_with_newlines() {
+        let path = test_file_path("not_terminated_with_newlines.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn comments_between_records() {
+        let path = test_file_path("comments_between_records.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 2);
     }
 
     #[test]
     fn invalid_byte_count() {
         let path = test_file_path("invalid_byte_count.hex");
         let records = parse_hex_file(path);
-        let actual_byte_count = record_byte_count(FixedByteCountRecord::ExtendedLinearAddress);
-        assert!(
-            match records {
-                Err(Error::ParseRecord {
-                    kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
-                    ..
-                }) if record_type == FixedByteCountRecord::ExtendedLinearAddress && expected_byte_count == actual_byte_count => true,
-                _ => false,
-            },
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                ..
+            }) if record_type == FixedByteCountRecord::ExtendedLinearAddress &&
+                  expected_byte_count == record_byte_count(FixedByteCountRecord::ExtendedLinearAddress)
         );
     }
 }
