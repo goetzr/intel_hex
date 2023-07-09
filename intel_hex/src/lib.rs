@@ -530,8 +530,50 @@ mod test {
     }
 
     #[test]
-    fn invalid_byte_count() {
-        let path = test_file_path("invalid_byte_count.hex");
+    fn eof_record_invalid_byte_count() {
+        let path = test_file_path("eof_record_invalid_byte_count.hex");
+        let records = parse_hex_file(path);
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                ..
+            }) if record_type == FixedByteCountRecord::EndOfFile &&
+                  expected_byte_count == record_byte_count(FixedByteCountRecord::EndOfFile)
+        );
+    }
+
+    #[test]
+    fn ext_seg_addr_record_invalid_byte_count() {
+        let path = test_file_path("ext_seg_addr_record_invalid_byte_count.hex");
+        let records = parse_hex_file(path);
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                ..
+            }) if record_type == FixedByteCountRecord::ExtendedSegmentAddress &&
+                  expected_byte_count == record_byte_count(FixedByteCountRecord::ExtendedSegmentAddress)
+        );
+    }
+
+    #[test]
+    fn start_seg_addr_record_invalid_byte_count() {
+        let path = test_file_path("start_seg_addr_record_invalid_byte_count.hex");
+        let records = parse_hex_file(path);
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                ..
+            }) if record_type == FixedByteCountRecord::StartSegmentAddress &&
+                  expected_byte_count == record_byte_count(FixedByteCountRecord::StartSegmentAddress)
+        );
+    }
+
+    #[test]
+    fn ext_lin_addr_record_invalid_byte_count() {
+        let path = test_file_path("ext_lin_addr_record_invalid_byte_count.hex");
         let records = parse_hex_file(path);
         matches!(
             records,
@@ -541,5 +583,251 @@ mod test {
             }) if record_type == FixedByteCountRecord::ExtendedLinearAddress &&
                   expected_byte_count == record_byte_count(FixedByteCountRecord::ExtendedLinearAddress)
         );
+    }
+
+    #[test]
+    fn start_lin_addr_record_invalid_byte_count() {
+        let path = test_file_path("start_lin_addr_record_invalid_byte_count.hex");
+        let records = parse_hex_file(path);
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidByteCount { record_type, expected_byte_count },
+                ..
+            }) if record_type == FixedByteCountRecord::StartLinearAddress &&
+                  expected_byte_count == record_byte_count(FixedByteCountRecord::StartLinearAddress)
+        );
+    }
+
+    #[test]
+    fn data_record() {
+        let path = test_file_path("data_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::Data);
+    }
+
+    #[test]
+    fn eof_record() {
+        let path = test_file_path("eof_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::EndOfFile);
+    }
+
+    #[test]
+    fn ext_seg_addr_record() {
+        let path = test_file_path("ext_seg_addr_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::ExtendedSegmentAddress);
+    }
+
+    #[test]
+    fn start_seg_addr_record() {
+        let path = test_file_path("start_seg_addr_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::StartSegmentAddress);
+    }
+
+    #[test]
+    fn ext_lin_addr_record() {
+        let path = test_file_path("ext_lin_addr_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::ExtendedLinearAddress);
+    }
+
+    #[test]
+    fn start_lin_addr_record() {
+        let path = test_file_path("start_lin_addr_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, RecordKind::StartLinearAddress);
+    }
+
+    #[test]
+    fn invalid_record_type() {
+        let path = test_file_path("invalid_record_type.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::InvalidType(6),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn missing_byte_count() {
+        let path = test_file_path("missing_byte_count.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::ByteCount,
+                    kind: ParseFieldError::Missing },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn missing_address() {
+        let path = test_file_path("missing_address.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Address,
+                    kind: ParseFieldError::Missing },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn missing_type() {
+        let path = test_file_path("missing_type.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Type,
+                    kind: ParseFieldError::Missing },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn missing_data() {
+        let path = test_file_path("missing_data.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Data,
+                    kind: ParseFieldError::Missing },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn missing_checksum() {
+        let path = test_file_path("missing_checksum.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Checksum,
+                    kind: ParseFieldError::Missing },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_byte_count() {
+        let path = test_file_path("incomplete_byte_count.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::ByteCount,
+                    kind: ParseFieldError::Incomplete },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_address() {
+        let path = test_file_path("incomplete_address.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Address,
+                    kind: ParseFieldError::Incomplete },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_type() {
+        let path = test_file_path("incomplete_type.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Type,
+                    kind: ParseFieldError::Incomplete },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_data() {
+        let path = test_file_path("incomplete_data.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Data,
+                    kind: ParseFieldError::Incomplete },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_data_bleeds_into_next_record() {
+        let path = test_file_path("incomplete_data_bleeds_into_next_record.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Data,
+                    kind: ParseFieldError::InvalidHex(_) },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incomplete_checksum() {
+        let path = test_file_path("incomplete_checksum.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ParseField {
+                    field: Field::Checksum,
+                    kind: ParseFieldError::Incomplete },
+                ..
+            })
+        ));
     }
 }
