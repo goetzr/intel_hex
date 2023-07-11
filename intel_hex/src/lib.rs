@@ -208,6 +208,9 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
     //     EofRecordNotLast(usize),
     // }
 
+    // TODO move arduplane to integration tests in tests/ folder.
+    // TODO move test files
+
     for record in records {
         /*match record.kind {
             RecordKind::Data => {
