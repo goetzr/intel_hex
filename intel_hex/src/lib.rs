@@ -83,6 +83,11 @@ impl<'a> HexFileParser<'a> {
                         expected_byte_count,
                     ));
                 }
+            } else {
+                // Must be a Data record.
+                if byte_count == 0 {
+                    return Err(empty_data_record(self.record_idx));
+                }
             }
 
             let mut data = None;
@@ -188,12 +193,20 @@ fn is_checksum_valid(to_checksum: &[u8], checksum: u8) -> bool {
     (calculated & 0xff) as u8 == checksum
 }
 
-pub fn process_records(records: Vec<Record>) -> ProcessRecordResults {
+pub fn process_records(records: Vec<Record>) -> ProcessResult {
     let mut chunks = Vec::with_capacity(records.len());
     let mut base_addr: u32 = 0;
-    let mut segment_start: Option<SegmentStart> = None;
-    let mut linear_start: Option<u32> = None;
-    let mut ended_with_eof_record = false;
+    let mut start_addr: Option<StartAddress> = None;
+
+    // pub enum ProcessError {
+    //     MixedSegmentedLinear {
+    //         record1: IndexTypePair,
+    //         record2: IndexTypePair,
+    //     },
+    //     MissingEofRecord,
+    //     MultipleEofRecords(Vec<usize>),
+    //     EofRecordNotLast(usize),
+    // }
 
     for record in records {
         /*match record.kind {
@@ -208,19 +221,12 @@ pub fn process_records(records: Vec<Record>) -> ProcessRecordResults {
         }*/
     }
 
-    ProcessRecordResults {
-        chunks,
-        segment_start,
-        linear_start,
-        ended_with_eof_record,
-    }
+    Ok(ProcessOutput { chunks, start_addr })
 }
 
-pub struct ProcessRecordResults {
+pub struct ProcessOutput {
     chunks: Vec<Chunk>,
-    segment_start: Option<SegmentStart>,
-    linear_start: Option<u32>,
-    ended_with_eof_record: bool,
+    start_addr: Option<StartAddress>,
 }
 
 pub struct Chunk {
@@ -236,6 +242,11 @@ impl Chunk {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+}
+
+enum StartAddress {
+    Segment(SegmentStart),
+    Linear(u32),
 }
 
 pub struct SegmentStart {
@@ -270,6 +281,20 @@ impl RecordKind {
             4 => Some(ExtendedLinearAddress),
             5 => Some(StartLinearAddress),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Display for RecordKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use RecordKind::*;
+        match self {
+            Data => write!(f, "Data"),
+            EndOfFile => write!(f, "EndOfFile"),
+            ExtendedSegmentAddress => write!(f, "ExtendedSegmentAddress"),
+            StartSegmentAddress => write!(f, "StartSegmentAddress"),
+            ExtendedLinearAddress => write!(f, "ExtendedLinearAddress"),
+            StartLinearAddress => write!(f, "StartLinearAddress"),
         }
     }
 }
@@ -390,6 +415,13 @@ fn invalid_byte_count(
     }
 }
 
+fn empty_data_record(record_idx: usize) -> Error {
+    Error::ParseRecord {
+        record_idx,
+        kind: ParseRecordError::EmptyDataRecord,
+    }
+}
+
 #[derive(Debug)]
 pub enum ParseRecordError {
     ParseField {
@@ -402,6 +434,7 @@ pub enum ParseRecordError {
         record_type: FixedByteCountRecord,
         expected_byte_count: u8,
     },
+    EmptyDataRecord,
 }
 
 #[derive(Debug)]
@@ -480,6 +513,7 @@ impl fmt::Display for Error {
                             "byte count must be {expected_byte_count} for {record_type} records"
                         )
                     }
+                    EmptyDataRecord => write!(f, "data record is empty"),
                 }
             }
         }
@@ -489,6 +523,53 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub enum ProcessError {
+    MixedSegmentedLinear {
+        record1: IndexTypePair,
+        record2: IndexTypePair,
+    },
+    MissingEofRecord,
+    MultipleEofRecords(Vec<usize>),
+    EofRecordNotLast(usize),
+}
+
+#[derive(Debug)]
+pub struct IndexTypePair {
+    index: usize,
+    kind: RecordKind,
+}
+
+impl fmt::Display for ProcessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to process records: ")?;
+        use ProcessError::*;
+        match self {
+            MixedSegmentedLinear { record1, record2 } => {
+                write!(
+                    f,
+                    "mixed segmented/linear records: {} record at index {}, {} record at index {}",
+                    record1.kind, record1.index, record2.kind, record2.index
+                )
+            }
+            MissingEofRecord => write!(f, "EOF record missing"),
+            MultipleEofRecords(indices) => {
+                let indices_str = indices
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "multiple EOF records: located at indices {indices_str}")
+            }
+            EofRecordNotLast(index) => write!(f, "EOF record not last: located at index {index}"),
+        }
+    }
+}
+
+impl std::error::Error for ProcessError {}
+
+pub type ProcessResult = std::result::Result<ProcessOutput, ProcessError>;
 
 #[cfg(test)]
 mod test {
@@ -512,7 +593,13 @@ mod test {
         assert_eq!(record.kind, RecordKind::Data);
         assert!(record.data.is_some());
         let data = record.data.as_ref().unwrap();
-        assert_eq!(data, &vec![0x00, 0x06, 0x02, 0x20, 0xED, 0x8C, 0x00, 0x08, 0x75, 0x79, 0x0E, 0x08, 0x81, 0x82, 0x00, 0x08]);
+        assert_eq!(
+            data,
+            &vec![
+                0x00, 0x06, 0x02, 0x20, 0xED, 0x8C, 0x00, 0x08, 0x75, 0x79, 0x0E, 0x08, 0x81, 0x82,
+                0x00, 0x08
+            ]
+        );
     }
 
     #[test]
@@ -527,6 +614,19 @@ mod test {
         let path = test_file_path("comments_between_records.hex");
         let records = parse_hex_file(path).expect("parse failed");
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn empty_data_record() {
+        let path = test_file_path("empty_data_record.hex");
+        let records = parse_hex_file(path);
+        matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::EmptyDataRecord,
+                ..
+            })
+        );
     }
 
     #[test]
@@ -675,7 +775,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::ByteCount,
-                    kind: ParseFieldError::Missing },
+                    kind: ParseFieldError::Missing
+                },
                 ..
             })
         ));
@@ -690,7 +791,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Address,
-                    kind: ParseFieldError::Missing },
+                    kind: ParseFieldError::Missing
+                },
                 ..
             })
         ));
@@ -705,7 +807,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Type,
-                    kind: ParseFieldError::Missing },
+                    kind: ParseFieldError::Missing
+                },
                 ..
             })
         ));
@@ -720,7 +823,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Data,
-                    kind: ParseFieldError::Missing },
+                    kind: ParseFieldError::Missing
+                },
                 ..
             })
         ));
@@ -735,7 +839,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Checksum,
-                    kind: ParseFieldError::Missing },
+                    kind: ParseFieldError::Missing
+                },
                 ..
             })
         ));
@@ -750,7 +855,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::ByteCount,
-                    kind: ParseFieldError::Incomplete },
+                    kind: ParseFieldError::Incomplete
+                },
                 ..
             })
         ));
@@ -765,7 +871,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Address,
-                    kind: ParseFieldError::Incomplete },
+                    kind: ParseFieldError::Incomplete
+                },
                 ..
             })
         ));
@@ -780,7 +887,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Type,
-                    kind: ParseFieldError::Incomplete },
+                    kind: ParseFieldError::Incomplete
+                },
                 ..
             })
         ));
@@ -795,7 +903,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Data,
-                    kind: ParseFieldError::Incomplete },
+                    kind: ParseFieldError::Incomplete
+                },
                 ..
             })
         ));
@@ -810,7 +919,8 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Data,
-                    kind: ParseFieldError::InvalidHex(_) },
+                    kind: ParseFieldError::InvalidHex(_)
+                },
                 ..
             })
         ));
@@ -825,9 +935,30 @@ mod test {
             Err(Error::ParseRecord {
                 kind: ParseRecordError::ParseField {
                     field: Field::Checksum,
-                    kind: ParseFieldError::Incomplete },
+                    kind: ParseFieldError::Incomplete
+                },
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn checksum_mismatch() {
+        let path = test_file_path("checksum_mismatch.hex");
+        let records = parse_hex_file(path);
+        assert!(matches!(
+            records,
+            Err(Error::ParseRecord {
+                kind: ParseRecordError::ChecksumMismatch,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn realistic_file() {
+        let path = test_file_path("arduplane.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        assert_eq!(records.len(), 106_962);
     }
 }
