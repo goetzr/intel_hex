@@ -197,6 +197,8 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
     let mut chunks = Vec::with_capacity(records.len());
     let mut base_addr: u32 = 0;
     let mut start_addr: Option<StartAddress> = None;
+   //let mut addr_model = None;
+    let mut eof_records = Vec::new();
 
     // pub enum ProcessError {
     //     MixedSegmentedLinear {
@@ -208,21 +210,33 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
     //     EofRecordNotLast(usize),
     // }
 
-    // TODO move arduplane to integration tests in tests/ folder. 
-    // TODO move test files
-
-    for record in records {
-        /*match record.kind {
-            RecordKind::Data => {
-
-            }
-            RecordKind::EndOfFile => ,
-            RecordKind::ExtendedSegmentAddress => ,
-            RecordKind::StartSegmentAddress => ,
-            RecordKind::ExtendedLinearAddress => ,
-            RecordKind::StartLinearAddress => ,
-        }*/
+    for (idx, record) in records.iter().enumerate() {
+        // match record.kind {
+        //     RecordKind::Data => {
+        //         // Data records are not allowed to be empty.
+        //         let chunk = Chunk { addr: base_addr + record.addr as u32, data: record.data.unwrap() };
+        //         chunks.push(chunk);
+        //     }
+        //     RecordKind::EndOfFile => eof_records.push(idx),
+        //     RecordKind::ExtendedSegmentAddress => {
+                
+        //     },
+        //     RecordKind::StartSegmentAddress => ,
+        //     RecordKind::ExtendedLinearAddress => ,
+        //     RecordKind::StartLinearAddress => ,
+        // }
     }
+
+     match eof_records.len() {
+        0 => return Err(ProcessError::MissingEofRecord),
+        1 => {
+            let eof_idx = eof_records[0];
+            if eof_idx != records.len() - 1 {
+                return Err(ProcessError::EofRecordNotLast(eof_idx));
+            }
+        },
+        _ => return Err(ProcessError::MultipleEofRecords(eof_records)),
+     };
 
     Ok(ProcessOutput { chunks, start_addr })
 }
@@ -255,6 +269,11 @@ enum StartAddress {
 pub struct SegmentStart {
     pub cs: u16,
     pub ip: u16,
+}
+
+enum AddressModel {
+    Segmented,
+    Linear,
 }
 
 pub struct Record {
@@ -529,19 +548,17 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum ProcessError {
-    MixedSegmentedLinear {
-        record1: IndexTypePair,
-        record2: IndexTypePair,
-    },
+    MultipleStartAddrRecords(Vec<IndexTypePair>),
+    MixedSegmentedLinearAddrRecords(Vec<IndexTypePair>),
     MissingEofRecord,
-    MultipleEofRecords(Vec<usize>),
     EofRecordNotLast(usize),
+    MultipleEofRecords(Vec<usize>),
 }
 
 #[derive(Debug)]
 pub struct IndexTypePair {
-    index: usize,
-    kind: RecordKind,
+    pub index: usize,
+    pub kind: RecordKind,
 }
 
 impl fmt::Display for ProcessError {
@@ -549,14 +566,19 @@ impl fmt::Display for ProcessError {
         write!(f, "failed to process records: ")?;
         use ProcessError::*;
         match self {
-            MixedSegmentedLinear { record1, record2 } => {
-                write!(
-                    f,
-                    "mixed segmented/linear records: {} record at index {}, {} record at index {}",
-                    record1.kind, record1.index, record2.kind, record2.index
-                )
+            MultipleStartAddrRecords(index_type_pairs) => {
+                write!(f, "multiple start address records: ")?;
+                let pair_strs: Vec<_> = index_type_pairs
+                    .iter()
+                    .map(|pair| format!("{{index={}, type={}}}", pair.index, pair.kind))
+                    .collect();
+                write!(f, "{}", pair_strs.join(", "))
+            }
+            MixedSegmentedLinearAddrRecords(index_type_pairs) => {
+                write!(f, "Mixed")
             }
             MissingEofRecord => write!(f, "EOF record missing"),
+            EofRecordNotLast(index) => write!(f, "EOF record not last: located at index {index}"),
             MultipleEofRecords(indices) => {
                 let indices_str = indices
                     .iter()
@@ -565,7 +587,6 @@ impl fmt::Display for ProcessError {
                     .join(", ");
                 write!(f, "multiple EOF records: located at indices {indices_str}")
             }
-            EofRecordNotLast(index) => write!(f, "EOF record not last: located at index {index}"),
         }
     }
 }
