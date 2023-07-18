@@ -1,12 +1,17 @@
 use std::fmt;
 
 pub fn hex_string_to_bytes(hex_string: &[u8]) -> Result {
-    assert!(hex_string.len() % 2 == 0, "hex string must consist of pairs of hex digits");
+    assert!(
+        hex_string.len() % 2 == 0,
+        "hex string must consist of pairs of hex digits"
+    );
     let mut bytes = Vec::new();
-    for (index, hex_digit_pair) in  hex_string.chunks(2).enumerate() {
+    for (index, hex_digit_pair) in hex_string.chunks(2).enumerate() {
         let (digit1, digit2) = (hex_digit_pair[0], hex_digit_pair[1]);
-        let high_nibble = decode_hex_digit(digit1).map_err(|_| InvalidHexString::new(index, digit1))?;
-        let low_nibble = decode_hex_digit(digit2).map_err(|_| InvalidHexString::new(index + 1, digit2))?;
+        let high_nibble =
+            decode_hex_digit(digit1).map_err(|_| InvalidHexString::new(index, digit1))?;
+        let low_nibble =
+            decode_hex_digit(digit2).map_err(|_| InvalidHexString::new(index + 1, digit2))?;
         bytes.push(high_nibble << 4 | low_nibble);
     }
     Ok(bytes)
@@ -26,7 +31,11 @@ impl InvalidHexString {
 
 impl fmt::Display for InvalidHexString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid hex string: invalid hex digit '{}' at index {}", self.digit as char, self.index)
+        write!(
+            f,
+            "invalid hex string: invalid hex digit '{}' at index {}",
+            self.digit as char, self.index
+        )
     }
 }
 
@@ -80,6 +89,11 @@ mod tests {
     #[test]
     fn decodes_hex_string() {
         let input = b"0123456789abcdefABCDEF";
-        assert_eq!(hex_string_to_bytes(input), Ok(vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef]));
+        assert_eq!(
+            hex_string_to_bytes(input),
+            Ok(vec![
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef
+            ])
+        );
     }
 }

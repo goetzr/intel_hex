@@ -74,7 +74,7 @@ impl<'a> HexFileParser<'a> {
             let kind = RecordKind::from_int(kind_val)
                 .ok_or(invalid_type_error(self.record_idx, kind_val))?;
 
-            if let Some(fixed_byte_count_kind) = FixedByteCountRecord::try_from(kind).ok() {
+            if let Ok(fixed_byte_count_kind) = FixedByteCountRecord::try_from(kind) {
                 let expected_byte_count = record_byte_count(fixed_byte_count_kind);
                 if byte_count != expected_byte_count {
                     return Err(invalid_byte_count(
@@ -197,53 +197,103 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
     let mut chunks = Vec::with_capacity(records.len());
     let mut base_addr: u32 = 0;
     let mut start_addr: Option<StartAddress> = None;
-   //let mut addr_model = None;
+
     let mut eof_records = Vec::new();
+    let mut start_addr_records = Vec::new();
+    let mut ext_addr_records = Vec::new();
 
-    // pub enum ProcessError {
-    //     MixedSegmentedLinear {
-    //         record1: IndexTypePair,
-    //         record2: IndexTypePair,
-    //     },
-    //     MissingEofRecord,
-    //     MultipleEofRecords(Vec<usize>),
-    //     EofRecordNotLast(usize),
-    // }
+    let num_records = records.len();
+    for (idx, record) in records.into_iter().enumerate() {
+        match record.kind {
+            RecordKind::Data => {
+                // Data records are not allowed to be empty.
+                let chunk = Chunk {
+                    addr: base_addr + record.addr as u32,
+                    data: record.data.unwrap(),
+                };
+                chunks.push(chunk);
+            }
+            RecordKind::EndOfFile => eof_records.push(idx),
+            RecordKind::ExtendedSegmentAddress => {
+                // Already verified to have 2 bytes of data.
+                base_addr = record.data.unwrap().as_slice().get_u16() as u32 * 16;
 
-    for (idx, record) in records.iter().enumerate() {
-        // match record.kind {
-        //     RecordKind::Data => {
-        //         // Data records are not allowed to be empty.
-        //         let chunk = Chunk { addr: base_addr + record.addr as u32, data: record.data.unwrap() };
-        //         chunks.push(chunk);
-        //     }
-        //     RecordKind::EndOfFile => eof_records.push(idx),
-        //     RecordKind::ExtendedSegmentAddress => {
-                
-        //     },
-        //     RecordKind::StartSegmentAddress => ,
-        //     RecordKind::ExtendedLinearAddress => ,
-        //     RecordKind::StartLinearAddress => ,
-        // }
+                let idx_type_pair = IndexTypePair {
+                    index: idx,
+                    kind: record.kind,
+                };
+                ext_addr_records.push(idx_type_pair);
+            }
+            RecordKind::StartSegmentAddress => {
+                // Already verified to have 4 bytes of data.
+                let data = record.data.unwrap();
+                let mut cursor = data.as_slice();
+                let cs = cursor.get_u16();
+                let ip = cursor.get_u16();
+                let _ = start_addr.replace(StartAddress::Segment(SegmentStart { cs, ip }));
+
+                let idx_type_pair = IndexTypePair {
+                    index: idx,
+                    kind: record.kind,
+                };
+                start_addr_records.push(idx_type_pair);
+            }
+            RecordKind::ExtendedLinearAddress => {
+                // Already verified to have 2 bytes of data.
+                base_addr = (record.data.unwrap().as_slice().get_u16() as u32) << 16;
+
+                let idx_type_pair = IndexTypePair {
+                    index: idx,
+                    kind: record.kind,
+                };
+                ext_addr_records.push(idx_type_pair);
+            }
+            RecordKind::StartLinearAddress => {
+                // Already verified to have 4 bytes of data.
+                let _ = start_addr.replace(StartAddress::Linear(
+                    record.data.unwrap().as_slice().get_u32(),
+                ));
+
+                let idx_type_pair = IndexTypePair {
+                    index: idx,
+                    kind: record.kind,
+                };
+                start_addr_records.push(idx_type_pair);
+            }
+        }
     }
 
-     match eof_records.len() {
+    match eof_records.len() {
         0 => return Err(ProcessError::MissingEofRecord),
         1 => {
             let eof_idx = eof_records[0];
-            if eof_idx != records.len() - 1 {
+            if eof_idx != num_records - 1 {
                 return Err(ProcessError::EofRecordNotLast(eof_idx));
             }
-        },
+        }
         _ => return Err(ProcessError::MultipleEofRecords(eof_records)),
-     };
+    };
+
+    if start_addr_records.len() > 1 {
+        return Err(ProcessError::MultipleStartAddrRecords(start_addr_records));
+    }
+
+    if ext_addr_records.len() > 1 {
+        let first_ext_rec = &ext_addr_records[0];
+        if !ext_addr_records[1..]
+            .iter()
+            .all(|pair| pair.kind == first_ext_rec.kind)
+        {
+            return Err(ProcessError::MixedExtendedAddrRecords(start_addr_records));
+        }
+    }
 
     Ok(ProcessOutput { chunks, start_addr })
 }
 
 pub struct ProcessOutput {
-    chunks: Vec<Chunk>,
-    start_addr: Option<StartAddress>,
+    pub chunks: Vec<Chunk>,
+    pub start_addr: Option<StartAddress>,
 }
 
 pub struct Chunk {
@@ -259,9 +309,13 @@ impl Chunk {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
-enum StartAddress {
+pub enum StartAddress {
     Segment(SegmentStart),
     Linear(u32),
 }
@@ -271,15 +325,10 @@ pub struct SegmentStart {
     pub ip: u16,
 }
 
-enum AddressModel {
-    Segmented,
-    Linear,
-}
-
 pub struct Record {
-    addr: u16,
-    kind: RecordKind,
-    data: Option<Vec<u8>>,
+    pub addr: u16,
+    pub kind: RecordKind,
+    pub data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -549,7 +598,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum ProcessError {
     MultipleStartAddrRecords(Vec<IndexTypePair>),
-    MixedSegmentedLinearAddrRecords(Vec<IndexTypePair>),
+    MixedExtendedAddrRecords(Vec<IndexTypePair>),
     MissingEofRecord,
     EofRecordNotLast(usize),
     MultipleEofRecords(Vec<usize>),
@@ -568,14 +617,21 @@ impl fmt::Display for ProcessError {
         match self {
             MultipleStartAddrRecords(index_type_pairs) => {
                 write!(f, "multiple start address records: ")?;
-                let pair_strs: Vec<_> = index_type_pairs
+                let pairs_str = index_type_pairs
                     .iter()
                     .map(|pair| format!("{{index={}, type={}}}", pair.index, pair.kind))
-                    .collect();
-                write!(f, "{}", pair_strs.join(", "))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{pairs_str}")
             }
-            MixedSegmentedLinearAddrRecords(index_type_pairs) => {
-                write!(f, "Mixed")
+            MixedExtendedAddrRecords(index_type_pairs) => {
+                write!(f, "mixed segmented/linear extended address records: ")?;
+                let pairs_str = index_type_pairs
+                    .iter()
+                    .map(|pair| format!("{{index={}, type={}}}", pair.index, pair.kind))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{pairs_str}")
             }
             MissingEofRecord => write!(f, "EOF record missing"),
             EofRecordNotLast(index) => write!(f, "EOF record not last: located at index {index}"),
