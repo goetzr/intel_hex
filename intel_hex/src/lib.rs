@@ -96,8 +96,9 @@ impl<'a> HexFileParser<'a> {
             }
 
             let checksum = self.parse_checksum()?;
-            if !is_checksum_valid(&to_checksum, checksum) {
-                return Err(checksum_mismatch_error(self.record_idx));
+            let calculated_checksum = calculate_checksum(&to_checksum);
+            if checksum != calculated_checksum {
+                return Err(checksum_mismatch_error(self.record_idx, calculated_checksum));
             }
 
             let record = Record { addr, kind, data };
@@ -183,14 +184,14 @@ impl<'a> HexFileParser<'a> {
     }
 }
 
-fn is_checksum_valid(to_checksum: &[u8], checksum: u8) -> bool {
+fn calculate_checksum(to_checksum: &[u8]) -> u8 {
     let mut calculated: u16 = 0;
     for &value in to_checksum {
         calculated = (calculated + value as u16) & 0xff;
     }
     // Two's complement: flip each bit then add 1.
     calculated = (calculated ^ 0xff) + 1;
-    (calculated & 0xff) as u8 == checksum
+    (calculated & 0xff) as u8
 }
 
 pub fn process_records(records: Vec<Record>) -> ProcessResult {
@@ -465,10 +466,10 @@ fn invalid_type_error(record_idx: usize, kind: u8) -> Error {
     }
 }
 
-fn checksum_mismatch_error(record_idx: usize) -> Error {
+fn checksum_mismatch_error(record_idx: usize, expected: u8) -> Error {
     Error::ParseRecord {
         record_idx,
-        kind: ParseRecordError::ChecksumMismatch,
+        kind: ParseRecordError::ChecksumMismatch { expected },
     }
 }
 
@@ -500,7 +501,9 @@ pub enum ParseRecordError {
         kind: ParseFieldError,
     },
     InvalidType(u8),
-    ChecksumMismatch,
+    ChecksumMismatch {
+        expected: u8,
+    },
     InvalidByteCount {
         record_type: FixedByteCountRecord,
         expected_byte_count: u8,
@@ -574,7 +577,7 @@ impl fmt::Display for Error {
                         }
                     }
                     InvalidType(kind) => write!(f, "invalid type: {kind}"),
-                    ChecksumMismatch => write!(f, "checksum mismatch"),
+                    ChecksumMismatch { expected } => write!(f, "checksum mismatch, expected {:2x}", expected),
                     InvalidByteCount {
                         record_type,
                         expected_byte_count,
@@ -655,7 +658,7 @@ pub type ProcessResult = std::result::Result<ProcessOutput, ProcessError>;
 mod test {
     use super::*;
 
-    use std::{path::PathBuf, os::windows::process};
+    use std::{os::windows::process, path::PathBuf};
 
     fn test_file_path(name: &str) -> PathBuf {
         let mut path: PathBuf = ["..", "test_files"].iter().collect();
@@ -1029,7 +1032,7 @@ mod test {
         assert!(matches!(
             records,
             Err(Error::ParseRecord {
-                kind: ParseRecordError::ChecksumMismatch,
+                kind: ParseRecordError::ChecksumMismatch { expected: _ },
                 ..
             })
         ));
@@ -1040,9 +1043,10 @@ mod test {
         let path = test_file_path("start_addr_set_segmented.hex");
         let records = parse_hex_file(path).expect("parse failed");
         let output = process_records(records).expect("process failed");
-        assert_eq!(matches!(
+        assert!(matches!(
             output.start_addr,
-            Some(StartAddress::Segment { cs, ip })
+            Some(StartAddress::Segment(SegmentStart { cs, ip }))
+                if cs == 0x1234 && ip == 0x5678
         ));
     }
 }

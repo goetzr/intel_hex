@@ -1,9 +1,21 @@
 use intel_hex::*;
 
 use std::path::PathBuf;
+use std::process;
 
 fn test_file_path(name: &str) -> PathBuf {
-    let mut path: PathBuf = ["..", "test_files"].iter().collect();
+    // TODO walk up directory tree until you find Cargo.toml.
+    // TODO move this to std::sync::Once closure
+    let output = process::Command::new(env!("CARGO"))
+        .arg("locate-project")
+        .arg("--workspace")
+        .arg("--message-format=plain")
+        .output()
+        .unwrap()
+        .stdout;
+    let cargo_toml_path = String::from_utf8(output).unwrap();
+
+    let mut path: PathBuf = [&cargo_toml_path, "..", "test_files"].iter().collect();
     path.push(name);
     path
 }
