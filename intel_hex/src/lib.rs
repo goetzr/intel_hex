@@ -655,7 +655,7 @@ pub type ProcessResult = std::result::Result<ProcessOutput, ProcessError>;
 mod test {
     use super::*;
 
-    use std::path::PathBuf;
+    use std::{path::PathBuf, os::windows::process};
 
     fn test_file_path(name: &str) -> PathBuf {
         let mut path: PathBuf = ["..", "test_files"].iter().collect();
@@ -1032,6 +1032,17 @@ mod test {
                 kind: ParseRecordError::ChecksumMismatch,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn start_addr_set_segmented() {
+        let path = test_file_path("start_addr_set_segmented.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records).expect("process failed");
+        assert_eq!(matches!(
+            output.start_addr,
+            Some(StartAddress::Segment { cs, ip })
         ));
     }
 }
