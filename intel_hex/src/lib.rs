@@ -98,7 +98,10 @@ impl<'a> HexFileParser<'a> {
             let checksum = self.parse_checksum()?;
             let calculated_checksum = calculate_checksum(&to_checksum);
             if checksum != calculated_checksum {
-                return Err(checksum_mismatch_error(self.record_idx, calculated_checksum));
+                return Err(checksum_mismatch_error(
+                    self.record_idx,
+                    calculated_checksum,
+                ));
             }
 
             let record = Record { addr, kind, data };
@@ -577,7 +580,9 @@ impl fmt::Display for Error {
                         }
                     }
                     InvalidType(kind) => write!(f, "invalid type: {kind}"),
-                    ChecksumMismatch { expected } => write!(f, "checksum mismatch, expected {:2x}", expected),
+                    ChecksumMismatch { expected } => {
+                        write!(f, "checksum mismatch, expected {:2x}", expected)
+                    }
                     InvalidByteCount {
                         record_type,
                         expected_byte_count,
@@ -658,12 +663,29 @@ pub type ProcessResult = std::result::Result<ProcessOutput, ProcessError>;
 mod test {
     use super::*;
 
-    use std::{os::windows::process, path::PathBuf};
+    use std::path::PathBuf;
+    use std::process;
+    use std::sync::OnceLock;
+
+    static WORKSPACE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
     fn test_file_path(name: &str) -> PathBuf {
-        let mut path: PathBuf = ["..", "test_files"].iter().collect();
-        path.push(name);
-        path
+        let workspace_path = WORKSPACE_PATH.get_or_init(|| {
+            let output = process::Command::new(env!("CARGO"))
+                .arg("locate-project")
+                .arg("--workspace")
+                .arg("--message-format=plain")
+                .output()
+                .unwrap()
+                .stdout;
+            let cargo_toml_path = String::from_utf8(output).unwrap();
+            PathBuf::from(cargo_toml_path).join("..")
+        });
+
+        let mut file_path = workspace_path.clone();
+        file_path.push("test_files");
+        file_path.push(name);
+        file_path
     }
 
     #[test]

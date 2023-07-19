@@ -7,8 +7,7 @@ use std::sync::OnceLock;
 static WORKSPACE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn test_file_path(name: &str) -> PathBuf {
-    // TODO walk up directory tree until you find Cargo.toml.
-    WORKSPACE_PATH.get_or_init(|| {
+    let workspace_path = WORKSPACE_PATH.get_or_init(|| {
         let output = process::Command::new(env!("CARGO"))
             .arg("locate-project")
             .arg("--workspace")
@@ -20,9 +19,10 @@ fn test_file_path(name: &str) -> PathBuf {
         PathBuf::from(cargo_toml_path).join("..")
     });
 
-    let mut path: PathBuf = [&cargo_toml_path, "..", "test_files"].iter().collect();
-    path.push(name);
-    path
+    let mut file_path = workspace_path.clone();
+    file_path.push("test_files");
+    file_path.push(name);
+    file_path
 }
 
 #[test]
