@@ -1071,4 +1071,43 @@ mod test {
                 if cs == 0x1234 && ip == 0x5678
         ));
     }
+
+    #[test]
+    fn start_addr_set_linear() {
+        let path = test_file_path("start_addr_set_linear.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records).expect("process failed");
+        assert!(matches!(
+            output.start_addr,
+            Some(StartAddress::Linear(addr))
+                if addr == 0x12345678
+        ));
+    }
+
+    #[test]
+    fn base_addr_set_segmented() {
+        let path = test_file_path("base_addr_set_segmented.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records).expect("process failed");
+        assert_eq!(output.chunks.len(), 1);
+        assert_eq!(output.chunks[0].addr, 0x179b8);
+    }
+
+    #[test]
+    fn base_addr_set_linear() {
+        let path = test_file_path("base_addr_set_linear.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records).expect("process failed");
+        assert_eq!(output.chunks.len(), 1);
+        assert_eq!(output.chunks[0].addr, 0x12345678);
+    }
+
+    #[test]
+    fn multiple_base_addrs_set() {
+        let path = test_file_path("multiple_base_addrs_set.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records).expect("process failed");
+        assert_eq!(output.chunks.len(), 1);
+        assert_eq!(output.chunks[0].addr, 0x12345678);
+    }
 }
