@@ -288,7 +288,7 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
             .iter()
             .all(|pair| pair.kind == first_ext_rec.kind)
         {
-            return Err(ProcessError::MixedExtendedAddrRecords(start_addr_records));
+            return Err(ProcessError::MixedExtendedAddrRecords(ext_addr_records));
         }
     }
 
@@ -612,7 +612,7 @@ pub enum ProcessError {
     MultipleEofRecords(Vec<usize>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct IndexTypePair {
     pub index: usize,
     pub kind: RecordKind,
@@ -1103,11 +1103,76 @@ mod test {
     }
 
     #[test]
-    fn multiple_base_addrs_set() {
-        let path = test_file_path("multiple_base_addrs_set.hex");
+    fn multiple_base_addrs() {
+        let path = test_file_path("multiple_base_addrs.hex");
         let records = parse_hex_file(path).expect("parse failed");
         let output = process_records(records).expect("process failed");
-        assert_eq!(output.chunks.len(), 1);
+        assert_eq!(output.chunks.len(), 2);
         assert_eq!(output.chunks[0].addr, 0x12345678);
+        assert_eq!(output.chunks[1].addr, 0x56785678);
+    }
+
+    #[test]
+    fn missing_eof_record() {
+        let path = test_file_path("missing_eof_record.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records);
+        assert!(matches!(
+            output,
+            Err(ProcessError::MissingEofRecord)
+        ));
+    }
+
+    #[test]
+    fn eof_record_not_last() {
+        let path = test_file_path("eof_record_not_last.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records);
+        assert!(matches!(
+            output,
+            Err(ProcessError::EofRecordNotLast(0))
+        ));
+    }
+
+    #[test]
+    fn multiple_eof_records() {
+        let path = test_file_path("multiple_eof_records.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records);
+        assert!(matches!(
+            output,
+            Err(ProcessError::MultipleEofRecords(indices))
+                if indices == vec![0, 2]
+        ));
+    }
+
+    #[test]
+    fn multiple_start_addr_records() {
+        let path = test_file_path("multiple_start_addr_records.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records);
+        assert!(matches!(
+            output,
+            Err(ProcessError::MultipleStartAddrRecords(indices))
+                if indices == vec![
+                    IndexTypePair { index: 0, kind: RecordKind::StartLinearAddress },
+                    IndexTypePair { index: 2, kind: RecordKind::StartLinearAddress },
+                ]
+        ));
+    }
+
+    #[test]
+    fn mixed_extended_addr_records() {
+        let path = test_file_path("mixed_extended_addr_records.hex");
+        let records = parse_hex_file(path).expect("parse failed");
+        let output = process_records(records);
+        assert!(matches!(
+            output,
+            Err(ProcessError::MixedExtendedAddrRecords(indices))
+                if indices == vec![
+                    IndexTypePair { index: 0, kind: RecordKind::ExtendedLinearAddress },
+                    IndexTypePair { index: 2, kind: RecordKind::ExtendedSegmentAddress },
+                ]
+        ));
     }
 }
