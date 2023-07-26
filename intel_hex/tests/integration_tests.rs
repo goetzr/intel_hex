@@ -1,4 +1,5 @@
 use intel_hex::*;
+use intel_hex::common::RecordKind;
 
 use std::path::PathBuf;
 use std::process;
