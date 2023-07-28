@@ -1,4 +1,4 @@
-use crate::intel_hex::Chunk;
+use crate::common::Chunk;
 
 pub fn flash_blocks<I, const N: usize>(chunks_iter: I) -> FlashBlocks<I,N>
 where I: Iterator<Item=Chunk>
@@ -86,7 +86,7 @@ impl<const N: usize> FlashBlock<N> {
     }
 
     fn last_byte_set(&self) -> bool {
-        self.initialized[N-1] == true
+        self.initialized[N-1]
     }
 
     fn store_chunk(&mut self, chunk: Chunk) -> Option<Chunk> {
@@ -98,7 +98,6 @@ impl<const N: usize> FlashBlock<N> {
         self.initialized[offset..offset+count].iter_mut().for_each(|flag| *flag = true);
         
         if count < chunk.len() {
-            let excess = chunk.len() - count;
             let excess_chunk = Chunk { addr: chunk.addr + count as u32, data: chunk.data()[count..].to_vec() };
             Some(excess_chunk)
         } else {

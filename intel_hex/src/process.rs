@@ -2,7 +2,7 @@ use std::fmt;
 
 use bytes::Buf;
 
-use crate::common::{Record, RecordKind};
+use crate::common::{Record, RecordKind, Chunk};
 
 pub fn process_records(records: Vec<Record>) -> ProcessResult {
     let mut chunks = Vec::with_capacity(records.len());
@@ -105,25 +105,6 @@ pub fn process_records(records: Vec<Record>) -> ProcessResult {
 pub struct ProcessOutput {
     pub chunks: Vec<Chunk>,
     pub start_addr: Option<StartAddress>,
-}
-
-pub struct Chunk {
-    pub addr: u32,
-    data: Vec<u8>,
-}
-
-impl Chunk {
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 pub enum StartAddress {

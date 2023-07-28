@@ -45,8 +45,27 @@ impl fmt::Display for RecordKind {
     }
 }
 
+pub struct Chunk {
+    pub addr: u32,
+    pub(crate) data: Vec<u8>,
+}
+
+impl Chunk {
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[cfg(test)]
-pub mod test {
+pub(crate) mod test {
     use std::path::PathBuf;
     use std::process;
     use std::sync::OnceLock;

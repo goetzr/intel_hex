@@ -1,9 +1,8 @@
-use intel_hex::*;
-use intel_hex::common::RecordKind;
-
 use std::path::PathBuf;
 use std::process;
 use std::sync::OnceLock;
+
+use intel_hex::*;
 
 static WORKSPACE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -45,4 +44,26 @@ fn process_realistic_file() {
     assert!(output.start_addr.is_none());
     assert_eq!(output.chunks.len(), num_data_recs);
     assert_eq!(output.chunks[0].addr >> 16, 0x0800);
+}
+
+#[test]
+fn flash_realistic_file() {
+    let path = test_file_path("arduplane.hex");
+    let records = parse_hex_file(path).expect("parse failed");
+    let output = process_records(records).expect("process failed");
+    let total_bytes_read: usize = output.chunks.iter().map(|c| c.data().len()).sum();
+    let flash_blocks: Vec<_> = flash_blocks::<_, 512>(output.chunks.into_iter()).collect();
+    let total_bytes_written: usize = flash_blocks
+        .iter()
+        .map(|b| b.initialized().iter().filter(|&b| *b).count())
+        .sum();
+    println!(
+        "Read a total of {} data bytes from the hex file",
+        total_bytes_read
+    );
+    println!("Wrote {} blocks to flash", flash_blocks.len());
+    println!(
+        "Wrote a total of {} data bytes to flash",
+        total_bytes_written
+    );
 }
